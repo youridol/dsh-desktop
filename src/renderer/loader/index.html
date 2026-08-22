@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>DSH Desktop</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main id="app" class="loading">
+    <div class="brand">
+      <img src="../../assets/icon.png" alt="DSH" class="logo" />
+      <h1>DeepSeek Harness</h1>
+    </div>
+
+    <div id="spinner" class="spinner-wrap">
+      <div class="spinner"></div>
+      <p id="statusText">正在启动 DSH 服务…</p>
+      <p id="elapsed" class="muted"></p>
+    </div>
+
+    <div id="error" class="error-wrap hidden">
+      <p id="errorTitle" class="error-title">服务未能就绪</p>
+      <p id="errorDetail" class="error-detail"></p>
+      <div class="actions">
+        <button id="retry" class="primary">重试</button>
+      </div>
+      <p class="muted">可点击右下角悬浮球打开控制面板查看日志或修改端口。</p>
+    </div>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>

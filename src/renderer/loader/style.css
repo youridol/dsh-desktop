@@ -1,0 +1,64 @@
+:root {
+  color-scheme: dark;
+  --bg: #101418;
+  --fg: #e8edf2;
+  --muted: #8b98a5;
+  --accent: #4d6bfe;
+  --danger: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.brand { text-align: center; }
+.logo { width: 84px; height: 84px; }
+.brand h1 { font-size: 20px; font-weight: 600; margin: 12px 0 0; letter-spacing: 1px; }
+
+.spinner-wrap { text-align: center; }
+.spinner {
+  width: 36px; height: 36px;
+  margin: 0 auto 14px;
+  border: 3px solid #2a313a;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.muted { color: var(--muted); font-size: 12.5px; }
+
+.error-wrap { text-align: center; max-width: 480px; padding: 0 20px; }
+.error-title { color: var(--danger); font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.error-detail { color: var(--muted); font-size: 13px; margin: 0 0 18px; word-break: break-all; }
+
+.actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 26px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.primary:hover { filter: brightness(1.12); }
+button.primary:disabled { opacity: 0.5; cursor: default; }
+
+.hidden { display: none !important; }

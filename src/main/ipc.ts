@@ -1,0 +1,163 @@
+/**
+ * IPC surface. One registration point; preload bridges expose narrow,
+ * window-specific APIs. Log/status updates are pushed to subscribed windows.
+ */
+import { dialog, ipcMain, app, type WebContents } from 'electron'
+import { getPaths } from './paths'
+import { getConfig, setConfig, readCredentials, writeCredentials } from './config'
+import { logEvents, recentLogs, clearLogs } from './logger'
+import * as dsh from './dsh/manager'
+import * as plugins from './plugins'
+import * as versions from './versions'
+import { getAutoStart, setAutoStart } from './autostart'
+import { getControlPanel } from './windows/control'
+import { ballClicked, dragBallBy } from './windows/floating'
+import { refreshServiceProbe } from './windows/main'
+
+const logSubscribers = new Set<WebContents>()
+let statusForwarderAttached = false
+
+function forwardStatus(wc: WebContents): void {
+  if (!statusForwarderAttached) {
+    statusForwarderAttached = true
+    dsh.dshEvents.on('status', (status) => {
+      for (const sub of logSubscribers) {
+        if (!sub.isDestroyed()) sub.send('dsh:status', status)
+      }
+      if (!wc.isDestroyed()) wc.send('dsh:status', status)
+    })
+  }
+}
+
+function pushToSubscribers(channel: string, payload: unknown): void {
+  for (const sub of logSubscribers) {
+    if (!sub.isDestroyed()) sub.send(channel, payload)
+  }
+}
+
+export function registerIpc(): void {
+  // ---- floating ball ----
+  ipcMain.on('ball:drag', (_e, dx: number, dy: number) => dragBallBy(dx, dy))
+  ipcMain.on('ball:click', () => ballClicked())
+
+  // ---- loader ----
+  ipcMain.handle('loader:retry', async () => {
+    await dsh.restart()
+    return dsh.getStatus()
+  })
+  ipcMain.handle('loader:probe', () => refreshServiceProbe())
+
+  // ---- control panel ----
+  ipcMain.handle('app:getState', () => ({
+    status: dsh.getStatus(),
+    config: getConfig(),
+    autoStart: getAutoStart(),
+    portable: getPaths().isPortable,
+    runtimeDir: getPaths().runtimeDir,
+    appVersion: app.getVersion(),
+    versions: versions.listInstalled(),
+    versionLabel: versions.currentVersionLabel(),
+  }))
+
+  ipcMain.handle('app:start', () => dsh.start())
+  ipcMain.handle('app:stop', () => dsh.stop('panel'))
+  ipcMain.handle('app:restart', () => dsh.restart())
+
+  // ---- plugins ----
+  ipcMain.handle('plugins:list', () => plugins.listPlugins())
+  ipcMain.handle('plugins:addLocal', async () => {
+    const opts = {
+      title: '选择插件目录或 .js 文件',
+      properties: ['openDirectory', 'openFile'] as Array<'openDirectory' | 'openFile'>,
+      filters: [{ name: '插件', extensions: ['js', 'cjs', 'mjs'] }],
+    }
+    const owner = getControlPanel()
+    const picked = owner ? await dialog.showOpenDialog(owner, opts) : await dialog.showOpenDialog(opts)
+    if (picked.canceled || !picked.filePaths[0]) return null
+    return plugins.addLocalPlugin(picked.filePaths[0])
+  })
+  ipcMain.handle('plugins:addGit', (_e, url: string) => plugins.addGitPlugin(url))
+  ipcMain.handle('plugins:setEnabled', (_e, id: string, enabled: boolean) => {
+    plugins.setPluginEnabled(id, enabled)
+    return plugins.listPlugins()
+  })
+  ipcMain.handle('plugins:remove', (_e, id: string) => {
+    plugins.removePlugin(id)
+    return plugins.listPlugins()
+  })
+  ipcMain.handle('plugins:apply', async () => {
+    // Regenerate the overlay from enabled plugins and restart DSH to load them.
+    await dsh.restart()
+    return dsh.getStatus()
+  })
+
+  // ---- versions ----
+  ipcMain.handle('versions:list', () => versions.listInstalled())
+  ipcMain.handle('versions:check', () => versions.checkForUpdates())
+  ipcMain.handle(
+    'versions:download',
+    (_e, version: string) =>
+      versions.downloadAndSwitch(version, (text) => pushToSubscribers('install:progress', {
+        version,
+        text,
+      })),
+  )
+  ipcMain.handle('versions:switch', (_e, version: string) => versions.switchTo(version))
+  ipcMain.handle('versions:delete', (_e, version: string) => versions.deleteVersion(version))
+
+  // ---- settings ----
+  ipcMain.handle('settings:set', (_e, patch: { port?: number; autoStart?: boolean; checkUpdatesOnStart?: boolean }) => {
+    const prevPort = getConfig().port
+    let needsRestart = false
+    if (patch.port !== undefined && patch.port !== prevPort) {
+      if (!(Number.isInteger(patch.port) && patch.port > 0 && patch.port < 65536)) {
+        throw new Error('端口必须是 1-65535 的整数')
+      }
+      setConfig({ port: patch.port })
+      needsRestart = true
+    }
+    if (patch.autoStart !== undefined) setAutoStart(patch.autoStart)
+    if (patch.checkUpdatesOnStart !== undefined) setConfig({ checkUpdatesOnStart: patch.checkUpdatesOnStart })
+    return {
+      config: getConfig(),
+      autoStart: getAutoStart(),
+      needsRestart,
+    }
+  })
+  ipcMain.handle('settings:applyRestart', () => dsh.restart())
+
+  ipcMain.handle('credentials:get', () => {
+    const c = readCredentials()
+    return {
+      githubUser: c.githubUser ?? '',
+      githubToken: c.githubToken ? '********' : '',
+      hasToken: !!c.githubToken,
+    }
+  })
+  ipcMain.handle('credentials:save', (_e, user: string, token: string) => {
+    const existing = readCredentials()
+    // '********' means "unchanged" from the masked form.
+    const nextToken = token === '********' ? existing.githubToken ?? '' : token.trim()
+    writeCredentials({ githubUser: user.trim(), githubToken: nextToken })
+    return true
+  })
+
+  // ---- logs ----
+  ipcMain.handle('logs:subscribe', (e) => {
+    logSubscribers.add(e.sender)
+    e.sender.once('destroyed', () => logSubscribers.delete(e.sender))
+    forwardStatus(e.sender)
+    return recentLogs()
+  })
+  ipcMain.handle('logs:clear', () => clearLogs())
+
+  // ---- panel ----
+  ipcMain.on('panel:close', () => getControlPanel()?.hide())
+
+  // Push new log lines to subscribed windows.
+  logEvents.on('line', (line) => pushToSubscribers('logs:line', line))
+  logEvents.on('cleared', () => pushToSubscribers('logs:cleared', null))
+
+  // DSH status changes also go to every subscriber (forwardStatus wires the first).
+  dsh.dshEvents.on('status', (status) => pushToSubscribers('dsh:status', status))
+}

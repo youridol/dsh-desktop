@@ -1,0 +1,49 @@
+appId: com.youridol.dsh-desktop
+productName: DSH Desktop
+copyright: Copyright © 2026 youridol
+
+directories:
+  output: release
+  buildResources: assets
+
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+
+# The bundled DSH runtime travels as ONE tarball (created by
+# scripts/pack-runtime.mjs from .dsh-runtime/) — electron-builder's copiers
+# silently drop node_modules trees and its static dependency collector misses
+# dsh's peer-loaded packages, so the app extracts the tarball on first launch
+# instead (Windows' built-in System32\tar.exe handles it).
+extraResources:
+  - from: build-assets
+    to: .
+    filter:
+      - "*.tgz"
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: assets/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DSH Desktop
+
+# Portable zip builds get resources/portable.marker so the app keeps runtime
+# data next to the exe; NSIS builds use %APPDATA% instead.
+afterPack: scripts/after-pack.mjs
+
+compression: normal

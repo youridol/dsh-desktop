@@ -1,0 +1,20 @@
+# Dependencies & build output
+node_modules/
+dist/
+release/
+build-assets/
+
+# Bundled DSH runtime stage (created by `npm run fetch-dsh`, never committed)
+.dsh-runtime/
+
+# Local runtime data (dev mode) — never commit credentials or user data
+runtime/
+
+# Probe / scratch
+.dsh-probe/
+*.log
+
+# OS junk
+Thumbs.db
+.DESKTOP-INI
+desktop.ini
