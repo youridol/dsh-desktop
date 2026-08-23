@@ -37,8 +37,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   activeVersion: 'bundled',
   plugins: [],
   ballOffset: null,
-  checkUpdatesOnStart: false,
+  checkUpdatesOnStart: true,
 }
+
 
 export const configEvents = new EventEmitter()
 
