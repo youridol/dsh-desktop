@@ -12,8 +12,10 @@ import { appLog } from './logger'
 let tray: Tray | null = null
 
 function trayIcon() {
-  const png = path.join(__dirname, '..', 'assets', 'icon.png')
-  return nativeImage.createFromPath(png).resize({ width: 16, height: 16 })
+  const png = path.join(__dirname, 'assets', 'icon.png')
+  const img = nativeImage.createFromPath(png).resize({ width: 16, height: 16 })
+  if (img.isEmpty()) appLog.warn(`托盘图标加载失败，路径无效: ${png}`)
+  return img
 }
 
 export function createTray(): Tray {
