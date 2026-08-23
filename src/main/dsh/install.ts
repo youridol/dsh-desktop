@@ -214,9 +214,10 @@ export function bundledVersion(bundledDir: string | null): string | null {
 
 /**
  * 从源码安装指定 commit：下载 codeload tarball → 解压 monorepo 根到
- * versions/src-<sha7>/ → pnpm install（corepack pnpm，解析 workspace: 协议）
- * → pnpm run build:lib（产出 apps/cli/lib/bin.js）→ 在
- * dir/node_modules/@deepseek-ai/dsh 建立 junction 指向 apps/cli，对齐 npm 版
+ * versions/src-<sha7>/ → pnpm install --frozen-lockfile（corepack pnpm，解析
+ * workspace: 协议）→ pnpm run build（build:lib + build:web，产出
+ * apps/cli/lib/bin.js；注入 DSH_CLIENT_COMMIT_HASH 替代 git rev-parse）→
+ * 在 dir/node_modules/@deepseek-ai/dsh 建立 junction 指向 apps/cli，对齐 npm 版
  * 布局（isVersionInstalled / manager 的硬编码入口路径零改动兼容）。
  */
 export async function ensureCommitInstalled(
