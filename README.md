@@ -36,7 +36,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 
 | 安装方式 | 运行目录 |
 | --- | --- |
-| NSIS 安装版 | `%APPDATA%\dsh-desktop\` |
+| NSIS 安装版 | `%APPDATA%\DSH Desktop\` |
 | zip 便携版 | exe 所在目录（`resources\portable.marker` 标记） |
 | 开发模式 | 项目 `runtime\` |
 
@@ -47,22 +47,24 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 环境要求：Node.js ≥ 20、npm、Git、Windows x64。
 
 ```bash
-npm install          # 开发依赖 + 生产依赖（含捆绑版 @deepseek-ai/dsh 与内置 npm CLI）
+npm install          # 安装 electron/electron-builder/esbuild 等开发依赖
+npm run fetch-dsh    # 下载捆绑版 DSH + 内置 npm CLI 到 .dsh-runtime/（默认最新 Release，--version 可指定）
 npm run make-icons   # 由 assets/icon.png 生成 assets/icon.ico
 npm run build        # esbuild 编译 main/preload/renderer -> dist/
 npm run dev          # 启动开发运行
 
-npm run dist         # 产出 release/nsis/*.exe（安装包）与 release/zip/*.zip（便携版）
+npm run dist         # 打包运行时 tgz 并产出 release/nsis/*.exe（安装包）与 release/zip/*.zip（便携版）
 ```
 
-- 捆绑版本由 `npm run fetch-dsh`（`--version 0.1.1-rc.2` 可指定，默认取 GitHub 最新 Release）写进 `package.json` 的 `dependencies`，随 `npm install` 安装。
 - 两种产物捆绑的 DSH 版本一致，图标均为 `assets/icon.png`。
+- `scripts/e2e-driver.mjs` 是端到端驱动脚本：应用以 `--remote-debugging-port=9222` 启动后，可经 CDP 调用控制面板的 `window.dshc` 桥接接口做自动化验证。
 
 ## 打包产物说明
 
-- **NSIS 安装包**：常规向导安装（默认每用户，可改目录），运行数据在 `%APPDATA%\dsh-desktop`。
+- **NSIS 安装包**：常规向导安装（默认每用户，可改目录），运行数据在 `%APPDATA%\DSH Desktop`。
 - **zip 便携版**：解压即用，运行数据保留在解压目录内。
-- 捆绑的 DSH 运行时与内置 npm CLI 以生产依赖形式进入 `node_modules`，打包后位于 `resources\app.asar.unpacked\node_modules`（`asarUnpack` 全量解包，供子进程直接运行）；应用本体不依赖系统 Node（优先使用系统 `node`，否则以 `ELECTRON_RUN_AS_NODE` 方式使用自带运行时；DSH 依赖的原生模块均为 NAPI ABI 稳定构建）。
+- 捆绑的 DSH 运行时以单个 `resources\dsh-runtime.tgz`（约 53MB）随包分发：electron-builder 的文件收集器会静默丢弃 `node_modules` 树、其静态依赖分析也会漏掉 dsh 运行时按 peer/dynamic 方式加载的包，因此应用在**首次启动**时用 Windows 自带的 `System32\tar.exe` 把 tgz 解压到运行目录 `versions\_bundled\`（约半分钟，日志可见进度），之后直接从该目录运行。
+- 应用本体不依赖系统 Node：优先使用系统 `node`（带 `--expose-internals`，DSH 的 HMR 需要），无 Node 时自动回退到 `ELECTRON_RUN_AS_NODE` 模式使用自带运行时（已实测）；DSH 依赖的原生模块均为 NAPI ABI 稳定构建。
 
 ## 技术要点
 
