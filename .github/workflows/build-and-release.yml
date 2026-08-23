@@ -1,0 +1,357 @@
+name: Build & release
+
+# 复用构建+发版管线，两种触发通道：
+#   - 本仓库任意分支 push          → 构建并按分支规则打 tag 发版（main: v{V}，其它: v{V}-<清洗后分支名>）
+#   - poll-upstream.yml 调用       → 上游新 Release 发 v{V}；仅上游 commit 变化发 v{V}-dev-<sha7> 候选版
+#
+# 幂等：目标 tag 已存在且非 force → 跳过发版（tag 存在性即幂等真相源）。
+# 版本 V 来源：workflow_call 由上游 tag 规范化而来（fetch-dsh --version 固定捆绑版本，保证产物与 tag 一致）；
+# push 通道在 fetch-dsh 后读取捆绑的 DSH 版本作为 V。
+# GITHUB_TOKEN 需要 contents: write（打 tag / 建 Release / 传资产）+ actions: write。
+
+on:
+  push:
+    # 任意分支 push 均触发构建发版；tag push 不匹配 branches 过滤，不会循环触发
+    branches:
+      - "**"
+  workflow_call:
+    inputs:
+      version:
+        description: "发版版本 V（上游 tag 规范化结果，如 0.1.1-rc.2；空 = 取捆绑 DSH 版本）"
+        type: string
+        default: ""
+      release_mode:
+        description: "auto | version | dev（dev 出 v{V}-dev-<sha7> 候选版）"
+        type: string
+        default: "auto"
+      upstream_tag:
+        description: "上游 Release tag（dsh-vX.Y.Z），用于 Release notes 引用"
+        type: string
+        default: ""
+      upstream_sha:
+        description: "上游默认分支最新 commit 的完整 SHA"
+        type: string
+        default: ""
+      upstream_notes:
+        description: "上游 Release body，写入本仓库 Release notes"
+        type: string
+        default: ""
+      upstream_prerelease:
+        description: '"true" | "false" | ""（空 = 按版本后缀启发式判定）'
+        type: string
+        default: ""
+      ref_to_build:
+        description: "要 checkout 的 ref（poll-upstream 调用传 main；push/手动通道忽略）"
+        type: string
+        default: ""
+      force:
+        description: "true = 目标 tag 已存在也重新发布/覆盖资产（修复通道，默认幂等跳过）"
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发版版本 V（空 = 取捆绑 DSH 版本）"
+        type: string
+        default: ""
+      release_mode:
+        description: "auto | version | dev"
+        type: string
+        default: "auto"
+      ref_to_build:
+        description: "要 checkout 的 ref（空 = 当前分支）"
+        type: string
+        default: ""
+      force:
+        description: "true = 目标 tag 已存在也重新发布/覆盖资产"
+        type: boolean
+        default: false
+
+concurrency:
+  # 全仓库唯一构建队列：重叠调度排队执行，杜绝并发双发
+  group: release-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      published: ${{ steps.publish.outputs.published }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # push 通道精确构建触发 commit；workflow_call 按调用方指定 ref
+        with:
+          ref: ${{ inputs.ref_to_build != '' && inputs.ref_to_build || github.sha }}
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Generate icons
+        run: node scripts/make-icons.mjs
+
+      - name: Fetch bundled DSH runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          # 显式版本（poll-upstream 通道）固定捆绑版本，保证产物与 tag 一致；
+          # push 通道走 fetch-dsh 默认行为（捆绑上游最新 Release）
+          if [ -n "$REQUESTED_VERSION" ]; then
+            node scripts/fetch-dsh.mjs --version "$REQUESTED_VERSION"
+          else
+            node scripts/fetch-dsh.mjs
+          fi
+
+      - name: Build app
+        run: node scripts/build.mjs
+
+      - name: Pack runtime tarball
+        run: node scripts/pack-runtime.mjs
+
+      - name: Clean previous artifacts
+        run: rm -rf release
+
+      - name: Build NSIS installer
+        run: npx electron-builder --win nsis --x64 -c.directories.output=release/nsis
+
+      - name: Build portable zip
+        run: npx electron-builder --win zip --x64 -c.directories.output=release/zip
+
+      - name: Checksums
+        run: |
+          sha256sum release/nsis/*.exe release/zip/*.zip > release/checksums.txt
+          cat release/checksums.txt
+
+      - name: Resolve version & target tag
+        id: decide
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RELEASE_MODE: ${{ inputs.release_mode }}
+          INPUT_REF_TO_BUILD: ${{ inputs.ref_to_build }}
+          INPUT_UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          INPUT_UPSTREAM_PRERELEASE: ${{ inputs.upstream_prerelease }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # 捆绑版本 = 产物里的 DSH 运行时版本（fetch-dsh 后必存在）
+          BUNDLED=$(node -p "require('./.dsh-runtime/node_modules/@deepseek-ai/dsh/package.json').version")
+          echo "bundled dsh version: $BUNDLED"
+
+          # poll-upstream 显式指定版本时必须与捆绑版本一致（fetch-dsh --version 已固定）
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$BUNDLED" ]; then
+            echo "error: requested version '$INPUT_VERSION' != bundled '$BUNDLED'" >&2
+            exit 1
+          fi
+          VERSION="${INPUT_VERSION:-$BUNDLED}"
+          echo "release version: $VERSION"
+
+          # 分支：workflow_call 通道以 ref_to_build（main）为准，push/手动通道用触发分支
+          BRANCH="${INPUT_REF_TO_BUILD:-$GITHUB_REF_NAME}"
+          echo "branch: $BRANCH"
+
+          # 清洗分支名 → git ref 安全后缀（/ 与非法字符转 -，裁剪长度）
+          sanitize() {
+            printf '%s' "$1" \
+              | tr '/' '-' \
+              | tr -c 'a-zA-Z0-9._-' '-' \
+              | sed 's/^[-.]*//; s/[-.]*$//' \
+              | cut -c1-60
+          }
+          BRANCH_LABEL=$(sanitize "$BRANCH")
+          [ -z "$BRANCH_LABEL" ] && BRANCH_LABEL=main
+
+          MODE="$INPUT_RELEASE_MODE"
+          if [ "$MODE" = "auto" ]; then
+            MODE=version
+          fi
+
+          # 目标 tag：main → v{V}；其它分支 → v{V}-<分支后缀>；dev → v{V}-dev-<sha7>
+          if [ "$MODE" = "dev" ] && [ -n "$INPUT_UPSTREAM_SHA" ]; then
+            TAG="v${VERSION}-dev-${INPUT_UPSTREAM_SHA:0:7}"
+          elif [ "$BRANCH" != "main" ]; then
+            TAG="v${VERSION}-${BRANCH_LABEL}"
+          else
+            TAG="v${VERSION}"
+          fi
+          echo "release mode: $MODE, target tag: $TAG"
+
+          # 幂等判定：目标 tag 已存在 → 跳过（force 例外，由 publish 覆盖资产）
+          SKIP=false
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            SKIP=true
+            echo "tag $TAG already exists — idempotent skip"
+          fi
+
+          # prerelease 标志：dev 恒为候选；否则用上游显式标记；空则按版本后缀启发式（rc/alpha/beta/pre）
+          if [ "$MODE" = "dev" ]; then
+            PREFLAG=true
+          elif [ -n "$INPUT_UPSTREAM_PRERELEASE" ]; then
+            PREFLAG="$INPUT_UPSTREAM_PRERELEASE"
+          elif [[ "$VERSION" =~ -?(rc|alpha|beta|pre)[.-]?[0-9]*$ ]]; then
+            PREFLAG=true
+          else
+            PREFLAG=false
+          fi
+          echo "prerelease: $PREFLAG"
+
+          {
+            echo "bundled=$BUNDLED"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "branch=$BRANCH"
+            echo "mode=$MODE"
+            echo "skip=$SKIP"
+            echo "preflag=$PREFLAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        id: publish
+        if: steps.decide.outputs.skip == 'false' || inputs.force
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+          VERSION: ${{ steps.decide.outputs.version }}
+          BRANCH: ${{ steps.decide.outputs.branch }}
+          MODE: ${{ steps.decide.outputs.mode }}
+          PREFLAG: ${{ steps.decide.outputs.preflag }}
+          BUNDLED: ${{ steps.decide.outputs.bundled }}
+          FORCE: ${{ inputs.force }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+          UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          UPSTREAM_NOTES: ${{ inputs.upstream_notes }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          TARGET_SHA=$(git rev-parse HEAD)
+          echo "target commit: ${TARGET_SHA:0:7}"
+
+          # 组装 Release notes（含上游引用与资产清单）
+          NOTE_FILE=release/notes.md
+          {
+            echo "DSH Desktop **v$VERSION**"
+            echo
+            echo "- 分支：\`$BRANCH\`"
+            if [ "$MODE" = "dev" ]; then
+              echo "- 类型：候选版（dev）— 上游默认分支已有新提交，正式版 tag 已存在"
+            else
+              echo "- 类型：正式版"
+            fi
+            echo "- 捆绑 DSH 运行时：\`@deepseek-ai/dsh@$BUNDLED\`"
+            if [ -n "$UPSTREAM_TAG" ]; then
+              echo "- 上游 Release：[${UPSTREAM_TAG}](https://github.com/deepseek-ai/deepseek-harness/releases/tag/${UPSTREAM_TAG})"
+            fi
+            if [ -n "$UPSTREAM_SHA" ]; then
+              echo "- 上游 commit：[\`${UPSTREAM_SHA:0:7}\`](https://github.com/deepseek-ai/deepseek-harness/commit/${UPSTREAM_SHA})"
+            fi
+            echo
+            echo "### Upstream release notes"
+            echo
+            if [ -n "$UPSTREAM_NOTES" ]; then
+              printf '%s\n' "$UPSTREAM_NOTES"
+            else
+              echo "_（无）_"
+            fi
+            echo
+            echo "### Artifacts"
+            echo "- \`DSH Desktop Setup*.exe\` — NSIS 安装包（每用户安装，数据在 %APPDATA%）"
+            echo "- \`DSH Desktop-*-win.zip\` — 便携版（解压即用，数据随目录）"
+            echo "- \`checksums.txt\` — SHA-256 校验和"
+          } > "$NOTE_FILE"
+
+          PRE_ARGS=()
+          if [ "$PREFLAG" = "true" ]; then
+            PRE_ARGS=(--prerelease)
+          fi
+          ASSETS=(release/nsis/*.exe release/zip/*.zip release/checksums.txt)
+          echo "assets:"
+          printf '  %s\n' "${ASSETS[@]}"
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            # tag 已存在（force 通道）：有 Release 则覆盖资产，无 Release 则补建（复用已存在 tag）
+            echo "tag $TAG exists (force path)"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "release $TAG exists — uploading artifacts (clobber)"
+              gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            else
+              echo "release $TAG missing — creating from existing tag"
+              gh release create "$TAG" "${ASSETS[@]}" --title "DSH Desktop v$VERSION" --notes-file "$NOTE_FILE" "${PRE_ARGS[@]}"
+            fi
+          else
+            # 新 tag：先本地打 tag 并推送，再 gh release create 指向构建 commit
+            git tag "$TAG"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
+            gh release create "$TAG" "${ASSETS[@]}" --target "$TARGET_SHA" \
+              --title "DSH Desktop v$VERSION" --notes-file "$NOTE_FILE" "${PRE_ARGS[@]}"
+          fi
+
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "=> published $TAG (v$VERSION, mode $MODE)"
+
+      - name: Write job summary
+        if: always()
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+          VERSION: ${{ steps.decide.outputs.version }}
+          BRANCH: ${{ steps.decide.outputs.branch }}
+          MODE: ${{ steps.decide.outputs.mode }}
+          SKIP: ${{ steps.decide.outputs.skip }}
+          PUBLISHED: ${{ steps.publish.outputs.published }}
+          FORCE: ${{ inputs.force }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+          UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+        run: |
+          {
+            if [ -z "$VERSION" ]; then
+              echo "## 构建失败 ❌ — 未产出版本信息（见上方错误日志）"
+              echo
+              echo "触发类型：\`${{ github.event_name }}\`，分支：\`${{ github.ref_name }}\`"
+            elif [ "$SKIP" = "true" ] && [ "$FORCE" != "true" ]; then
+              echo "## DSH Desktop v$VERSION — ⏭️ 幂等跳过（tag 已存在）"
+            elif [ "$PUBLISHED" = "true" ]; then
+              echo "## DSH Desktop v$VERSION — ✅ 已发布"
+            else
+              echo "## DSH Desktop v$VERSION — ❌ 未发布（发布步骤失败，见上方日志）"
+            fi
+            echo
+            if [ -n "$VERSION" ]; then
+              echo "| 项 | 值 |"
+              echo "| --- | --- |"
+              echo "| 版本 | \`$VERSION\` |"
+              echo "| Release tag | \`$TAG\` |"
+              echo "| 分支 | \`$BRANCH\` |"
+              echo "| 模式 | \`$MODE\` |"
+              if [ "$PUBLISHED" = "true" ]; then
+                echo "| 资产 | $(ls -1 release/nsis/*.exe release/zip/*.zip release/checksums.txt 2>/dev/null | xargs -n1 basename | tr '\n' '，') |"
+              fi
+              if [ -n "$UPSTREAM_TAG" ]; then
+                echo "| 上游 Release | \`${UPSTREAM_TAG}\` |"
+              fi
+              if [ -n "$UPSTREAM_SHA" ]; then
+                echo "| 上游 commit | \`${UPSTREAM_SHA:0:7}\` |"
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

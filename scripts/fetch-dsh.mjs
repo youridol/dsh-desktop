@@ -25,8 +25,11 @@ function argValue(name) {
 
 async function latestDshVersion() {
   // GitHub release tags `dsh-vX.Y.Z(-rc.N)` map 1:1 to npm versions.
+  // GITHUB_TOKEN (CI) is used when present to dodge anonymous rate limits.
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'dsh-desktop-build' }
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
   const res = await fetch('https://api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=10', {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'dsh-desktop-build' },
+    headers,
   })
   if (!res.ok) throw new Error(`GitHub API ${res.status}`)
   const releases = await res.json()

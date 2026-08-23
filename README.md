@@ -59,6 +59,22 @@ npm run dist         # 打包运行时 tgz 并产出 release/nsis/*.exe（安装
 - 两种产物捆绑的 DSH 版本一致，图标均为 `assets/icon.png`。
 - `scripts/e2e-driver.mjs` 是端到端驱动脚本：应用以 `--remote-debugging-port=9222` 启动后，可经 CDP 调用控制面板的 `window.dshc` 桥接接口做自动化验证。
 
+## CI / 自动发版
+
+更新通道固定为 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 上游，由两个工作流协作（`.github/workflows/`）：
+
+| 工作流 | 触发 | 行为 |
+| --- | --- | --- |
+| `poll-upstream.yml` | 每小时定时 + `workflow_dispatch`（可 `force` / `release_mode` / `override_version`） | 巡检上游最新 Release tag 与默认分支最新 commit：**新 Release**（本仓库无对应 tag `v{版本}`）→ 以 main 代码调 `build-and-release.yml` 发正式版；**仅上游新 commit** → 发候选版 `v{版本}-dev-{sha7}`（prerelease）；无变化 → 幂等退出 |
+| `build-and-release.yml` | 任意分支 push + 被前者 `workflow_call` 复用 + 手动 | windows-latest / Node 22 上执行 typecheck → make-icons → fetch-dsh（上游最新，poll 通道按指定版本固定捆绑）→ 构建 → NSIS + zip → 校验和 → 按分支规则打 tag 并 `gh release` 发布（标题 `DSH Desktop v{版本}`，附 exe/zip/checksums 三资产），最终写 run summary |
+
+发版规则：
+- **tag 规则**：main 分支 → `v{版本}`；其它分支 → `v{版本}-{清洗后分支名}`（`/` 与非法字符转 `-`）；dev 候选版 → `v{版本}-dev-{上游sha7}`。
+- **版本映射**：上游 tag `dsh-v0.1.1-rc.2` → 桌面端版本 `0.1.1-rc.2`（去 `dsh-` 前缀）；Release 标题统一为 `DSH Desktop v{版本}`。
+- **幂等**：以本仓库 tag 存在性为真相源——目标 tag 已存在即跳过发版，同一版本连跑多次调度只有第一次发版；`force=true` 时才覆盖资产（修复通道）。
+- **无循环**：tag push 不匹配 `branches` 过滤，不会触发构建回流。
+- 所有 Release 产物均含 SHA-256 校验和（`checksums.txt`）。
+
 ## 打包产物说明
 
 - **NSIS 安装包**：常规向导安装（默认每用户，可改目录），运行数据在 `%APPDATA%\DSH Desktop`。
