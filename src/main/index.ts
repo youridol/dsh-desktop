@@ -54,7 +54,11 @@ if (!gotLock) {
       versions
         .checkForUpdates()
         .then((r) => {
-          if (r.hasUpdate && r.latest) {
+          if (r.rateLimited) {
+            appLog.warn('启动时检查更新：GitHub 限流（403），可在设置中配置 Token 提升限额')
+          } else if (r.offline) {
+            appLog.warn('启动时检查更新：离线，跳过')
+          } else if (r.hasUpdate && r.latest) {
             appLog.warn(`发现新版本 ${r.latest.version}（当前 ${r.current}），可在控制面板-版本管理中更新`)
           }
         })
