@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.2.1] - 2026-08-23
+
+### 修复
+
+- `build-and-release.yml`：NSIS/zip 两个 electron-builder 步骤注入 `GH_TOKEN`（`${{ github.token }}`）。此前未设置时，electron-builder 下载 winCodeSign/nsis 工具链的匿名 GitHub API 请求被限流，构建报 “GitHub Personal Access Token is not set” 中止，导致无任何 Release 产物。
+
 ## [v0.2.0] - 2026-08-23
 
 ### 新增

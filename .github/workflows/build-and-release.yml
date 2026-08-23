@@ -133,9 +133,16 @@ jobs:
         run: rm -rf release
 
       - name: Build NSIS installer
+        # electron-builder 构建时需从 GitHub 下载 winCodeSign/nsis 工具链并解析最新版本，
+        # 匿名 API 请求会被限流（报 “GitHub Personal Access Token is not set”），必须注入 GH_TOKEN
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: npx electron-builder --win nsis --x64 -c.directories.output=release/nsis
 
       - name: Build portable zip
+        # zip 目标同样可能触发 GitHub 工具链下载，保持与 NSIS 步骤一致的认证
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: npx electron-builder --win zip --x64 -c.directories.output=release/zip
 
       - name: Checksums
