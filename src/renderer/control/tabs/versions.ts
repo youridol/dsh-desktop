@@ -1,7 +1,7 @@
 /**
  * 版本管理：检查 GitHub Releases、下载并切换（npm 安装）、回退与删除。
  */
-import { bridge, h, type InstalledVersion, type ReleaseInfo } from '../api'
+import { bridge, h, type InstalledVersion, type ReleaseInfo, type CommitInfo } from '../api'
 
 let pane: HTMLElement
 let installedList: HTMLElement
@@ -20,6 +20,11 @@ export function initVersions(paneEl: HTMLElement, toast: (msg: string, err?: boo
   installedCard.append(installedList)
 
   const releaseCard = h('div', { class: 'card' })
+  // 来源选择器（默认「最新发布版本」）
+  releaseCard.append(h('div', { style: 'margin:8px 0' },
+    mkRadio('src-release', 'source', 'release', '最新发布版本', true),
+    mkRadio('src-commit', 'source', 'commit', '最新提交（源码）', false),
+  ))
   checkBtn = h('button', {
     class: 'btn primary',
     onclick: () => void check(toast),
@@ -81,7 +86,8 @@ async function check(toast: (msg: string, err?: boolean) => void): Promise<void>
   checkBtn.disabled = true
   checkBtn.textContent = '正在检查…'
   try {
-    const result = await bridge().checkUpdates()
+    const source = (document.querySelector('input[name="source"]:checked') as HTMLInputElement | null)?.value ?? 'release'
+    const result = await bridge().checkUpdates(source as 'release' | 'commit')
     releasesList.innerHTML = ''
     if (result.rateLimited) {
       releasesList.append(h('div', { style: 'display:flex;align-items:center;gap:10px;margin:8px 0' },
@@ -98,6 +104,10 @@ async function check(toast: (msg: string, err?: boolean) => void): Promise<void>
       releasesList.append(h('p', { class: 'muted' },
         h('span', { class: 'badge warn' }, document.createTextNode('离线')),
         document.createTextNode(' 无法连接 GitHub，本地版本切换不受影响')))
+      return
+    }
+    if (result.latestCommit) {
+      releasesList.append(renderCommit(result.latestCommit))
       return
     }
     if (result.hasUpdate && result.latest) {
@@ -165,5 +175,43 @@ async function removeVersion(version: string): Promise<void> {
     await renderInstalled()
   } catch (err) {
     alert(String(err))
+  }
+}
+
+function mkRadio(id: string, name: string, value: string, label: string, checked: boolean): HTMLElement {
+  const input = document.createElement('input')
+  input.type = 'radio'
+  input.id = id
+  input.name = name
+  input.value = value
+  input.checked = checked
+  return h('label', { style: 'margin-right:16px;cursor:pointer' }, input, document.createTextNode(` ${label}`))
+}
+
+function renderCommit(c: CommitInfo): HTMLElement {
+  const btn = h('button', {
+    class: 'btn small primary',
+    onclick: () => void downloadCommit(c),
+  }, document.createTextNode('下载源码并安装'))
+  return h('div', { class: 'item' },
+    h('div', { class: 'meta grow' },
+      h('div', { class: 'name mono' }, document.createTextNode(c.shortSha)),
+      h('div', { class: 'sub' }, document.createTextNode(`${c.message} · ${c.date.slice(0, 10)}`)),
+    ),
+    btn,
+  )
+}
+
+async function downloadCommit(c: CommitInfo): Promise<void> {
+  progressWrap.classList.remove('hidden')
+  progressText.textContent = `[${c.shortSha}] 开始下载源码并安装…`
+  try {
+    await bridge().installCommit(c.sha)
+    await renderInstalled()
+    progressText.textContent = `[src-${c.shortSha}] 安装完成并已切换`
+  } catch (err) {
+    progressText.textContent = `[src-${c.shortSha}] 失败: ${String(err).slice(0, 200)}`
+  } finally {
+    setTimeout(() => progressWrap.classList.add('hidden'), 4000)
   }
 }
