@@ -55,10 +55,12 @@ export function runCaptured(
   env: NodeJS.ProcessEnv,
   onLine: (line: string) => void,
   cwd?: string,
+  shell = false,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     installLog.info(`[${label}] ${command} ${args.join(' ')}${cwd ? ` (cwd ${cwd})` : ''}`)
-    const child = spawn(command, args, { env, windowsHide: true, cwd })
+    // Windows 下 .cmd 命令（如 pnpm）需要 shell:true 才能经 PATHEXT 解析
+    const child = spawn(command, args, { env, windowsHide: true, cwd, shell })
     let errText = ''
     const wire = (stream: NodeJS.ReadableStream) => {
       let buf = ''
@@ -182,10 +184,11 @@ export function bundledVersion(bundledDir: string | null): string | null {
 }
 
 /**
- * 从源码安装指定 commit：下载 codeload tarball → 解压为
- * versions/src-<sha7>/node_modules/@deepseek-ai/dsh/ → 在包根运行 vendored npm
- * 安装运行时依赖。目录布局与 npm 安装版一致，isVersionInstalled / manager
- * 的硬编码入口路径（node_modules/@deepseek-ai/dsh/lib/bin.js）零改动兼容。
+ * 从源码安装指定 commit：下载 codeload tarball → 解压 monorepo 根到
+ * versions/src-<sha7>/ → pnpm install（corepack pnpm，解析 workspace: 协议）
+ * → pnpm run build:lib（产出 apps/cli/lib/bin.js）→ 在
+ * dir/node_modules/@deepseek-ai/dsh 建立 junction 指向 apps/cli，对齐 npm 版
+ * 布局（isVersionInstalled / manager 的硬编码入口路径零改动兼容）。
  */
 export async function ensureCommitInstalled(
   sha: string,
@@ -193,12 +196,16 @@ export async function ensureCommitInstalled(
 ): Promise<string> {
   const short = sha.slice(0, 7)
   const dir = versionDir(`src-${short}`)
-  const pkgDir = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh')
-  if (fs.existsSync(path.join(pkgDir, 'lib', 'bin.js'))) {
+  const linkDir = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh')
+  if (
+    fs.existsSync(path.join(dir, 'apps', 'cli', 'lib', 'bin.js')) &&
+    fs.existsSync(path.join(linkDir, 'lib', 'bin.js'))
+  ) {
     installLog.info(`Commit src-${short} already installed at ${dir}`)
     return dir
   }
-  const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  const sysroot = process.env.SystemRoot ?? 'C:\\Windows'
+  const tar = path.join(sysroot, 'System32', 'tar.exe')
   const tgz = path.join(getPaths().downloadsDir, `dsh-${short}.tar.gz`)
   const emit = (line: string) => {
     events.onProgress?.(line)
@@ -210,9 +217,9 @@ export async function ensureCommitInstalled(
   fs.mkdirSync(getPaths().downloadsDir, { recursive: true })
   fs.writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
   fs.rmSync(dir, { recursive: true, force: true })
-  fs.mkdirSync(pkgDir, { recursive: true })
-  // tar 顶层为 <sha>/，strip 一层后解压到 pkgDir
-  const extract = spawnSync(tar, ['-xzf', tgz, '-C', pkgDir, '--strip-components=1'], {
+  fs.mkdirSync(dir, { recursive: true })
+  // tar 顶层为 <sha>/，strip 一层后把 monorepo 根解压到版本目录
+  const extract = spawnSync(tar, ['-xzf', tgz, '-C', dir, '--strip-components=1'], {
     stdio: 'pipe',
     encoding: 'utf8',
     windowsHide: true,
@@ -220,32 +227,29 @@ export async function ensureCommitInstalled(
   if (extract.status !== 0) {
     throw new Error(`源码解压失败: ${(extract.stderr || extract.stdout || '').slice(0, 500)}`)
   }
-  // cwd 固定到包根，使用源码自带 package.json 安装其运行时依赖
-  fs.writeFileSync(
-    path.join(dir, 'package.json'),
-    JSON.stringify({ name: `dsh-runtime-src-${short}`, private: true, version: '0.0.0' }, null, 2),
-  )
+  // 仓库根自带 package.json（name=@deepseek-ai/dsh-root, workspaces），
+  // 不写入额外 manifest；pnpm 在 monorepo 根解析全部 workspace: 依赖。
   const node = nodeRuntime()
-  installLog.info(`Installing deps for src-${short} (via ${node.label})`)
-  await runCaptured(
-    `install src-${short}`,
-    node.command,
-    [
-      ...node.argsPrefix,
-      npmCliPath()!,
-      'install',
-      '--omit=dev',
-      '--no-audit',
-      '--no-fund',
-      '--loglevel=error',
-      '--registry=https://registry.npmjs.org',
-    ],
-    node.env,
-    emit,
-    pkgDir,
-  )
-  if (!fs.existsSync(path.join(pkgDir, 'lib', 'bin.js'))) {
-    throw new Error(`源码安装完成但入口缺失: ${path.join(pkgDir, 'lib', 'bin.js')}`)
+  installLog.info(`Installing workspace deps for src-${short} (pnpm via ${node.label})`)
+  await runCaptured('pnpm install src-' + short, 'pnpm', ['install', '--frozen-lockfile'], node.env, emit, dir, true)
+  installLog.info(`Building lib for src-${short}`)
+  await runCaptured('pnpm build src-' + short, 'pnpm', ['run', 'build:lib'], node.env, emit, dir, true)
+  // 布局兼容层：npm 版安装把 @deepseek-ai/dsh 放 node_modules/@deepseek-ai/dsh；
+  // pnpm 版源码位于 apps/cli。建 junction 使硬编码入口路径一致（零改动
+  // manager / isVersionInstalled）。
+  const scoped = path.join(dir, 'node_modules', '@deepseek-ai')
+  fs.mkdirSync(scoped, { recursive: true })
+  fs.rmSync(path.join(scoped, 'dsh'), { recursive: true, force: true })
+  const mklink = spawnSync('cmd.exe', ['/c', 'mklink', '/J', path.join(scoped, 'dsh'), path.join(dir, 'apps', 'cli')], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (mklink.status !== 0) {
+    throw new Error(`创建 dsh junction 失败: ${(mklink.stderr || mklink.stdout || '').slice(0, 500)}`)
+  }
+  if (!fs.existsSync(path.join(linkDir, 'lib', 'bin.js'))) {
+    throw new Error(`源码安装完成但入口缺失: ${path.join(linkDir, 'lib', 'bin.js')}`)
   }
   installLog.info(`Commit src-${short} installed successfully`)
   return dir
