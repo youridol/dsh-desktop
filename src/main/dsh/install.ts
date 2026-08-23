@@ -11,6 +11,8 @@ import { getPaths, npmCliPath, bundledDshDir, bundledExtractDir, runtimeTgzPath 
 import { installLog } from '../logger'
 import { nodeRuntime } from './nodebin'
 
+const SOURCE_REPO = 'deepseek-ai/deepseek-harness'
+
 export interface SpawnProgress {
   onLine: (line: string) => void
 }
@@ -177,4 +179,74 @@ export function bundledVersion(bundledDir: string | null): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 从源码安装指定 commit：下载 codeload tarball → 解压为
+ * versions/src-<sha7>/node_modules/@deepseek-ai/dsh/ → 在包根运行 vendored npm
+ * 安装运行时依赖。目录布局与 npm 安装版一致，isVersionInstalled / manager
+ * 的硬编码入口路径（node_modules/@deepseek-ai/dsh/lib/bin.js）零改动兼容。
+ */
+export async function ensureCommitInstalled(
+  sha: string,
+  events: InstallEvents = {},
+): Promise<string> {
+  const short = sha.slice(0, 7)
+  const dir = versionDir(`src-${short}`)
+  const pkgDir = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh')
+  if (fs.existsSync(path.join(pkgDir, 'lib', 'bin.js'))) {
+    installLog.info(`Commit src-${short} already installed at ${dir}`)
+    return dir
+  }
+  const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  const tgz = path.join(getPaths().downloadsDir, `dsh-${short}.tar.gz`)
+  const emit = (line: string) => {
+    events.onProgress?.(line)
+    installLog.info(line)
+  }
+  installLog.info(`Downloading source archive for ${short}`)
+  const res = await fetch(`https://codeload.github.com/${SOURCE_REPO}/tar.gz/${sha}`)
+  if (!res.ok) throw new Error(`源码下载失败: GitHub ${res.status} for ${sha}`)
+  fs.mkdirSync(getPaths().downloadsDir, { recursive: true })
+  fs.writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
+  fs.rmSync(dir, { recursive: true, force: true })
+  fs.mkdirSync(path.join(dir, 'node_modules', '@deepseek-ai'), { recursive: true })
+  // tar 顶层为 <sha>/，strip 一层后解压到 pkgDir
+  const extract = spawnSync(tar, ['-xzf', tgz, '-C', pkgDir, '--strip-components=1'], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (extract.status !== 0) {
+    throw new Error(`源码解压失败: ${(extract.stderr || extract.stdout || '').slice(0, 500)}`)
+  }
+  // cwd 固定到包根，使用源码自带 package.json 安装其运行时依赖
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: `dsh-runtime-src-${short}`, private: true, version: '0.0.0' }, null, 2),
+  )
+  const node = nodeRuntime()
+  installLog.info(`Installing deps for src-${short} (via ${node.label})`)
+  await runCaptured(
+    `install src-${short}`,
+    node.command,
+    [
+      ...node.argsPrefix,
+      npmCliPath()!,
+      'install',
+      '--omit=dev',
+      '--no-audit',
+      '--no-fund',
+      '--loglevel=error',
+      '--registry=https://registry.npmjs.org',
+    ],
+    node.env,
+    emit,
+    pkgDir,
+  )
+  if (!fs.existsSync(path.join(pkgDir, 'lib', 'bin.js'))) {
+    throw new Error(`源码安装完成但入口缺失: ${path.join(pkgDir, 'lib', 'bin.js')}`)
+  }
+  installLog.info(`Commit src-${short} installed successfully`)
+  return dir
 }

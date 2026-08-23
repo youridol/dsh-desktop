@@ -11,6 +11,7 @@ import {
   bundledVersion,
   ensureVersionInstalled,
   ensureBundledRuntime,
+  ensureCommitInstalled,
   isVersionInstalled,
   removeVersion,
   versionDir,
@@ -125,6 +126,24 @@ export async function downloadAndSwitch(
   await ensureVersionInstalled(version, { onProgress })
   setConfig({ activeVersion: version })
   appLog.info(`Active version switched to ${version}`)
+  if (opts.restart !== false) await dsh.restart()
+}
+
+/** 安装指定 commit 的源码并切换为当前版本（source='commit' 通道）。 */
+export async function installCommit(
+  sha: string,
+  onProgress?: (text: string) => void,
+  opts: SwitchOptions = {},
+): Promise<void> {
+  const short = sha.slice(0, 7)
+  const key = `src-${short}`
+  if (getConfig().activeVersion === key && isVersionInstalled(key)) {
+    installLog.info(`Commit ${key} already active`)
+    return
+  }
+  await ensureCommitInstalled(sha, { onProgress })
+  setConfig({ activeVersion: key })
+  appLog.info(`Active version switched to ${key}`)
   if (opts.restart !== false) await dsh.restart()
 }
 
