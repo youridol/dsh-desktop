@@ -127,9 +127,9 @@ export function sendToMainWindow(channel: string, payload: unknown): void {
 
 export function iconPath(): string {
   // Prefer the packaged .ico; fall back to the source png.
-  const ico = path.join(__dirname, '..', 'assets', 'icon.ico')
+  const ico = path.join(__dirname, 'assets', 'icon.ico')
   if (fs.existsSync(ico)) return ico
-  return path.join(__dirname, '..', 'assets', 'icon.png')
+  return path.join(__dirname, 'assets', 'icon.png')
 }
 
 /** Re-check the service without changing DSH state (retry button support). */
