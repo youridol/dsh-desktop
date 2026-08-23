@@ -93,6 +93,35 @@ export function versionDir(version: string): string {
   return path.join(getPaths().versionsDir, version)
 }
 
+/**
+ * 递归删除版本目录；Windows 下含 junction（pnpm/源码安装建）的目录 rmSync
+ * 可能 ENOTEMPTY 残留，先删 junction 再重试，保证后续安装不被旧残留污染。
+ */
+export function rmDirRecursiveSafe(target: string): void {
+  if (!fs.existsSync(target)) return
+  const link = path.join(target, 'node_modules', '@deepseek-ai', 'dsh')
+  try {
+    // 先摘除 pnpm/兼容层建立的 dsh junction，避免递归删除时被当作普通目录处理
+    fs.rmSync(link, { recursive: true, force: true })
+  } catch {
+    /* 链接不存在时忽略 */
+  }
+  try {
+    fs.rmSync(target, { recursive: true, force: true })
+  } catch (err) {
+    // 首次删除残留（Windows junction 时序），重试一次
+    if (fs.existsSync(link)) {
+      try {
+        fs.rmSync(link, { recursive: true, force: true })
+      } catch {
+        /* 忽略 */
+      }
+    }
+    fs.rmSync(target, { recursive: true, force: true })
+    installLog.info(`Repeated removal of ${target} (${String(err).slice(0, 120)})`)
+  }
+}
+
 export function isVersionInstalled(version: string): boolean {
   const dir = versionDir(version)
   return fs.existsSync(path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
@@ -160,7 +189,7 @@ export async function ensureVersionInstalled(
 }
 
 export function removeVersion(version: string): void {
-  fs.rmSync(versionDir(version), { recursive: true, force: true })
+  rmDirRecursiveSafe(versionDir(version))
   installLog.info(`Removed version dir for ${version}`)
 }
 
@@ -197,8 +226,9 @@ export async function ensureCommitInstalled(
   const short = sha.slice(0, 7)
   const dir = versionDir(`src-${short}`)
   const linkDir = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh')
+  const cliBin = path.join(dir, 'apps', 'cli', 'lib', 'bin.js')
   if (
-    fs.existsSync(path.join(dir, 'apps', 'cli', 'lib', 'bin.js')) &&
+    fs.existsSync(cliBin) &&
     fs.existsSync(path.join(linkDir, 'lib', 'bin.js'))
   ) {
     installLog.info(`Commit src-${short} already installed at ${dir}`)
@@ -216,7 +246,7 @@ export async function ensureCommitInstalled(
   if (!res.ok) throw new Error(`源码下载失败: GitHub ${res.status} for ${sha}`)
   fs.mkdirSync(getPaths().downloadsDir, { recursive: true })
   fs.writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
-  fs.rmSync(dir, { recursive: true, force: true })
+  rmDirRecursiveSafe(dir)
   fs.mkdirSync(dir, { recursive: true })
   // tar 顶层为 <sha>/，strip 一层后把 monorepo 根解压到版本目录
   const extract = spawnSync(tar, ['-xzf', tgz, '-C', dir, '--strip-components=1'], {
@@ -227,6 +257,17 @@ export async function ensureCommitInstalled(
   if (extract.status !== 0) {
     throw new Error(`源码解压失败: ${(extract.stderr || extract.stdout || '').slice(0, 500)}`)
   }
+  // [探针] tar 解压后立即检查 apps/cli 是否解出内容
+  {
+    const probe = path.join(dir, 'apps', 'cli')
+    let entries = -1
+    try {
+      entries = fs.readdirSync(probe).length
+    } catch {
+      entries = -1
+    }
+    installLog.info(`probe tar-ok: apps/cli entries=${entries} bin.js=${fs.existsSync(path.join(probe, 'lib', 'bin.js'))}`)
+  }
   // 仓库根自带 package.json（name=@deepseek-ai/dsh-root, workspaces），
   // 不写入额外 manifest；pnpm 在 monorepo 根解析全部 workspace: 依赖。
   const node = nodeRuntime()
@@ -235,6 +276,10 @@ export async function ensureCommitInstalled(
   // 官方构建（build:lib + build:web）。tarball 不含 .git，注入 commit hash
   // 供 client-build-environment 读取，避免 git rev-parse 失败。
   installLog.info(`Building src-${short} (lib + web)`)
+  {
+    const probe = path.join(dir, 'apps', 'cli')
+    installLog.info(`probe pre-build: apps/cli entries=${fs.readdirSync(probe).length}`)
+  }
   await runCaptured(
     'pnpm build src-' + short,
     'pnpm',
@@ -247,6 +292,10 @@ export async function ensureCommitInstalled(
   // 布局兼容层：npm 版安装把 @deepseek-ai/dsh 放 node_modules/@deepseek-ai/dsh；
   // pnpm 版源码位于 apps/cli。建 junction 使硬编码入口路径一致（零改动
   // manager / isVersionInstalled）。
+  {
+    const probe = path.join(dir, 'apps', 'cli')
+    installLog.info(`probe post-build: apps/cli bin.js=${fs.existsSync(path.join(probe, 'lib', 'bin.js'))}`)
+  }
   const scoped = path.join(dir, 'node_modules', '@deepseek-ai')
   const linkPath = path.join(scoped, 'dsh')
   const targetPath = path.join(dir, 'apps', 'cli')
@@ -261,8 +310,9 @@ export async function ensureCommitInstalled(
   if (mklink.status !== 0) {
     throw new Error(`创建 dsh junction 失败: ${(mklink.stderr || mklink.stdout || '').slice(0, 500)}`)
   }
-  if (!fs.existsSync(path.join(linkDir, 'lib', 'bin.js'))) {
-    throw new Error(`源码安装完成但入口缺失: ${path.join(linkDir, 'lib', 'bin.js')}`)
+  // 入口检查：产物真实位置（apps/cli/lib/bin.js）与兼容层 junction 路径
+  if (!fs.existsSync(cliBin) && !fs.existsSync(path.join(linkDir, 'lib', 'bin.js'))) {
+    throw new Error(`源码安装完成但入口缺失: ${cliBin} (junction: ${path.join(linkDir, 'lib', 'bin.js')})`)
   }
   installLog.info(`Commit src-${short} installed successfully`)
   return dir
