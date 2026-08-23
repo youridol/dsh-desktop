@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import { getPaths } from './paths'
 import { getConfig, setConfig } from './config'
 import { appLog, installLog } from './logger'
-import { listReleases, compareVersions, GitHubRateLimitError, type ReleaseInfo } from './dsh/releases'
+import { listReleases, compareVersions, getLatestCommit, GitHubRateLimitError, type ReleaseInfo, type CommitInfo } from './dsh/releases'
 import {
   bundledVersion,
   ensureVersionInstalled,
@@ -35,6 +35,8 @@ export interface VersionCheckResult {
   rateLimitResetAt?: number
   /** 网络不可达（离线）时为 true。 */
   offline?: boolean
+  /** source='commit' 时返回的最新提交；release 模式为 null。 */
+  latestCommit: CommitInfo | null
 }
 
 export function listInstalled(): InstalledVersion[] {
@@ -63,11 +65,30 @@ export function currentVersionLabel(): string {
   return active
 }
 
-export async function checkForUpdates(): Promise<VersionCheckResult> {
+export type VersionSource = 'release' | 'commit'
+
+export async function checkForUpdates(source: VersionSource = 'release'): Promise<VersionCheckResult> {
   const current = getConfig().activeVersion
   const currentV =
     current === 'bundled' ? bundledVersion(bundledDshDir()) ?? '0.0.0' : current
-  const base = { current: currentV, latest: null, hasUpdate: false, releases: [], checkedAt: Date.now() }
+  const base = { current: currentV, latest: null, hasUpdate: false, releases: [], latestCommit: null, checkedAt: Date.now() }
+
+  if (source === 'commit') {
+    try {
+      const c = await getLatestCommit()
+      const installed = isVersionInstalled(`src-${c.shortSha}`)
+      appLog.info(`Update check (commit): ${c.shortSha} ${c.message} installed=${installed}`)
+      return { ...base, hasUpdate: !installed, latestCommit: c }
+    } catch (err) {
+      if (err instanceof GitHubRateLimitError) {
+        appLog.warn('Update check (commit): rate limited (403)')
+        return { ...base, rateLimited: true, rateLimitResetAt: err.resetAt }
+      }
+      appLog.warn(`Update check (commit): network error — ${String(err)}`)
+      return { ...base, offline: true }
+    }
+  }
+
   let releases: ReleaseInfo[]
   try {
     releases = await listReleases()
