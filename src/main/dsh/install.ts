@@ -257,17 +257,6 @@ export async function ensureCommitInstalled(
   if (extract.status !== 0) {
     throw new Error(`源码解压失败: ${(extract.stderr || extract.stdout || '').slice(0, 500)}`)
   }
-  // [探针] tar 解压后立即检查 apps/cli 是否解出内容
-  {
-    const probe = path.join(dir, 'apps', 'cli')
-    let entries = -1
-    try {
-      entries = fs.readdirSync(probe).length
-    } catch {
-      entries = -1
-    }
-    installLog.info(`probe tar-ok: apps/cli entries=${entries} bin.js=${fs.existsSync(path.join(probe, 'lib', 'bin.js'))}`)
-  }
   // 仓库根自带 package.json（name=@deepseek-ai/dsh-root, workspaces），
   // 不写入额外 manifest；pnpm 在 monorepo 根解析全部 workspace: 依赖。
   const node = nodeRuntime()
@@ -276,10 +265,6 @@ export async function ensureCommitInstalled(
   // 官方构建（build:lib + build:web）。tarball 不含 .git，注入 commit hash
   // 供 client-build-environment 读取，避免 git rev-parse 失败。
   installLog.info(`Building src-${short} (lib + web)`)
-  {
-    const probe = path.join(dir, 'apps', 'cli')
-    installLog.info(`probe pre-build: apps/cli entries=${fs.readdirSync(probe).length}`)
-  }
   await runCaptured(
     'pnpm build src-' + short,
     'pnpm',
@@ -292,10 +277,6 @@ export async function ensureCommitInstalled(
   // 布局兼容层：npm 版安装把 @deepseek-ai/dsh 放 node_modules/@deepseek-ai/dsh；
   // pnpm 版源码位于 apps/cli。建 junction 使硬编码入口路径一致（零改动
   // manager / isVersionInstalled）。
-  {
-    const probe = path.join(dir, 'apps', 'cli')
-    installLog.info(`probe post-build: apps/cli bin.js=${fs.existsSync(path.join(probe, 'lib', 'bin.js'))}`)
-  }
   const scoped = path.join(dir, 'node_modules', '@deepseek-ai')
   const linkPath = path.join(scoped, 'dsh')
   const targetPath = path.join(dir, 'apps', 'cli')
