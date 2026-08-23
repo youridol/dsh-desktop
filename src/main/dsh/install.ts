@@ -210,7 +210,7 @@ export async function ensureCommitInstalled(
   fs.mkdirSync(getPaths().downloadsDir, { recursive: true })
   fs.writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
   fs.rmSync(dir, { recursive: true, force: true })
-  fs.mkdirSync(path.join(dir, 'node_modules', '@deepseek-ai'), { recursive: true })
+  fs.mkdirSync(pkgDir, { recursive: true })
   // tar 顶层为 <sha>/，strip 一层后解压到 pkgDir
   const extract = spawnSync(tar, ['-xzf', tgz, '-C', pkgDir, '--strip-components=1'], {
     stdio: 'pipe',
