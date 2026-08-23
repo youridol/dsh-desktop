@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import { getPaths } from './paths'
 import { getConfig, setConfig } from './config'
 import { appLog, installLog } from './logger'
-import { listReleases, compareVersions, type ReleaseInfo } from './dsh/releases'
+import { listReleases, compareVersions, GitHubRateLimitError, type ReleaseInfo } from './dsh/releases'
 import {
   bundledVersion,
   ensureVersionInstalled,
@@ -30,6 +30,11 @@ export interface VersionCheckResult {
   hasUpdate: boolean
   releases: ReleaseInfo[]
   checkedAt: number
+  /** GitHub 限流（403）时为 true，releases/latest 为空。 */
+  rateLimited?: boolean
+  rateLimitResetAt?: number
+  /** 网络不可达（离线）时为 true。 */
+  offline?: boolean
 }
 
 export function listInstalled(): InstalledVersion[] {
@@ -59,16 +64,27 @@ export function currentVersionLabel(): string {
 }
 
 export async function checkForUpdates(): Promise<VersionCheckResult> {
-  const releases = await listReleases()
-  const latest = releases[0] ?? null
   const current = getConfig().activeVersion
   const currentV =
     current === 'bundled' ? bundledVersion(bundledDshDir()) ?? '0.0.0' : current
+  const base = { current: currentV, latest: null, hasUpdate: false, releases: [], checkedAt: Date.now() }
+  let releases: ReleaseInfo[]
+  try {
+    releases = await listReleases()
+  } catch (err) {
+    if (err instanceof GitHubRateLimitError) {
+      appLog.warn(`Update check: rate limited (403)${err.resetAt ? ` reset@${new Date(err.resetAt).toISOString()}` : ''}`)
+      return { ...base, rateLimited: true, rateLimitResetAt: err.resetAt }
+    }
+    appLog.warn(`Update check: network error — ${String(err)}`)
+    return { ...base, offline: true }
+  }
+  const latest = releases[0] ?? null
   const hasUpdate = latest ? compareVersions(latest.version, currentV) > 0 : false
   appLog.info(
     `Update check: current=${currentV} latest=${latest?.version ?? '?'} hasUpdate=${hasUpdate}`,
   )
-  return { current: currentV, latest, hasUpdate, releases, checkedAt: Date.now() }
+  return { ...base, latest, hasUpdate, releases }
 }
 
 export interface SwitchOptions {
