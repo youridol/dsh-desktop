@@ -232,8 +232,18 @@ export async function ensureCommitInstalled(
   const node = nodeRuntime()
   installLog.info(`Installing workspace deps for src-${short} (pnpm via ${node.label})`)
   await runCaptured('pnpm install src-' + short, 'pnpm', ['install', '--frozen-lockfile'], node.env, emit, dir, true)
-  installLog.info(`Building lib for src-${short}`)
-  await runCaptured('pnpm build src-' + short, 'pnpm', ['run', 'build:lib'], node.env, emit, dir, true)
+  // 官方构建（build:lib + build:web）。tarball 不含 .git，注入 commit hash
+  // 供 client-build-environment 读取，避免 git rev-parse 失败。
+  installLog.info(`Building src-${short} (lib + web)`)
+  await runCaptured(
+    'pnpm build src-' + short,
+    'pnpm',
+    ['run', 'build'],
+    { ...node.env, DSH_CLIENT_COMMIT_HASH: short },
+    emit,
+    dir,
+    true,
+  )
   // 布局兼容层：npm 版安装把 @deepseek-ai/dsh 放 node_modules/@deepseek-ai/dsh；
   // pnpm 版源码位于 apps/cli。建 junction 使硬编码入口路径一致（零改动
   // manager / isVersionInstalled）。
