@@ -22,6 +22,22 @@ export interface ReleaseInfo {
   notes: string
 }
 
+/** GitHub API 限流（HTTP 403 且 x-ratelimit-remaining: 0）。 */
+export class GitHubRateLimitError extends Error {
+  constructor(public readonly resetAt?: number) {
+    super('GitHub API 403 rate limit exceeded')
+    this.name = 'GitHubRateLimitError'
+  }
+}
+
+/** 网络层错误（离线 / DNS / 超时）。 */
+export class GitHubNetworkError extends Error {
+  constructor(cause: unknown) {
+    super(`GitHub API network error: ${String(cause)}`)
+    this.name = 'GitHubNetworkError'
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
@@ -37,7 +53,17 @@ export function tagToVersion(tag: string): string {
 }
 
 async function ghFetch(pathname: string): Promise<unknown> {
-  const res = await fetch(`${API}${pathname}`, { headers: authHeaders() })
+  let res: Response
+  try {
+    res = await fetch(`${API}${pathname}`, { headers: authHeaders() })
+  } catch (err) {
+    throw new GitHubNetworkError(err)
+  }
+  if (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0') {
+    const resetSec = Number(res.headers.get('x-ratelimit-reset') ?? '0')
+    const resetAt = Number.isFinite(resetSec) && resetSec > 0 ? resetSec * 1000 : undefined
+    throw new GitHubRateLimitError(resetAt)
+  }
   if (!res.ok) {
     throw new Error(`GitHub API ${res.status} ${res.statusText} for ${pathname}`)
   }
