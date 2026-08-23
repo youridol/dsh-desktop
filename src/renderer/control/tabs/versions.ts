@@ -83,6 +83,23 @@ async function check(toast: (msg: string, err?: boolean) => void): Promise<void>
   try {
     const result = await bridge().checkUpdates()
     releasesList.innerHTML = ''
+    if (result.rateLimited) {
+      releasesList.append(h('div', { style: 'display:flex;align-items:center;gap:10px;margin:8px 0' },
+        h('span', { class: 'badge warn' }, document.createTextNode('GitHub 限流（403）')),
+        document.createTextNode('请在 设置 → GitHub 凭据 配置 Token 提升速率上限，或稍后重试；本地版本切换不受影响。'),
+        h('button', {
+          class: 'btn small',
+          onclick: () => document.querySelector<HTMLElement>('.tab[data-tab="settings"]')?.click(),
+        }, document.createTextNode('前往设置')),
+      ))
+      return
+    }
+    if (result.offline) {
+      releasesList.append(h('p', { class: 'muted' },
+        h('span', { class: 'badge warn' }, document.createTextNode('离线')),
+        document.createTextNode(' 无法连接 GitHub，本地版本切换不受影响')))
+      return
+    }
     if (result.hasUpdate && result.latest) {
       releasesList.append(h('p', { class: 'muted' },
         h('span', { class: 'badge warn' }, document.createTextNode('有新版本')),
