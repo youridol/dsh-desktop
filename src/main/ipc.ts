@@ -93,7 +93,7 @@ export function registerIpc(): void {
 
   // ---- versions ----
   ipcMain.handle('versions:list', () => versions.listInstalled())
-  ipcMain.handle('versions:check', () => versions.checkForUpdates())
+  ipcMain.handle('versions:check', (_e, source?: 'release' | 'commit') => versions.checkForUpdates(source))
   ipcMain.handle(
     'versions:download',
     (_e, version: string) =>
@@ -101,6 +101,12 @@ export function registerIpc(): void {
         version,
         text,
       })),
+  )
+  ipcMain.handle('versions:installCommit', (_e, sha: string) =>
+    versions.installCommit(sha, (text) => pushToSubscribers('install:progress', {
+      version: `src-${sha.slice(0, 7)}`,
+      text,
+    })),
   )
   ipcMain.handle('versions:switch', (_e, version: string) => versions.switchTo(version))
   ipcMain.handle('versions:delete', (_e, version: string) => versions.deleteVersion(version))

@@ -37,6 +37,14 @@ export interface ReleaseInfo {
   notes: string
 }
 
+export interface CommitInfo {
+  sha: string
+  shortSha: string
+  message: string
+  date: string
+  url: string
+}
+
 export interface InstalledVersion {
   version: string
   origin: 'bundled' | 'downloaded'
@@ -81,11 +89,12 @@ interface Bridge {
   applyPlugins: () => Promise<DshStatus>
 
   listVersions: () => Promise<InstalledVersion[]>
-  checkUpdates: () => Promise<{
+  checkUpdates: (source?: 'release' | 'commit') => Promise<{
     current: string
     latest: ReleaseInfo | null
     hasUpdate: boolean
     releases: ReleaseInfo[]
+    latestCommit: CommitInfo | null
     checkedAt: number
     rateLimited?: boolean
     rateLimitResetAt?: number
@@ -94,6 +103,7 @@ interface Bridge {
   downloadVersion: (version: string) => Promise<void>
   switchVersion: (version: string) => Promise<void>
   deleteVersion: (version: string) => Promise<void>
+  installCommit: (sha: string) => Promise<void>
 
   setSettings: (patch: Partial<AppSettings>) => Promise<{ config: AppSettings; autoStart: boolean; needsRestart: boolean }>
   applyRestart: () => Promise<void>

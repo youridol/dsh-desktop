@@ -18,10 +18,11 @@ const api = {
   applyPlugins: () => ipcRenderer.invoke('plugins:apply'),
 
   listVersions: () => ipcRenderer.invoke('versions:list'),
-  checkUpdates: () => ipcRenderer.invoke('versions:check'),
+  checkUpdates: (source?: 'release' | 'commit') => ipcRenderer.invoke('versions:check', source),
   downloadVersion: (version: string) => ipcRenderer.invoke('versions:download', version),
   switchVersion: (version: string) => ipcRenderer.invoke('versions:switch', version),
   deleteVersion: (version: string) => ipcRenderer.invoke('versions:delete', version),
+  installCommit: (sha: string) => ipcRenderer.invoke('versions:installCommit', sha),
 
   setSettings: (patch: { port?: number; autoStart?: boolean; checkUpdatesOnStart?: boolean }) =>
     ipcRenderer.invoke('settings:set', patch),
