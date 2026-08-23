@@ -88,6 +88,32 @@ export async function listReleases(limit = 30): Promise<ReleaseInfo[]> {
   }))
 }
 
+export interface CommitInfo {
+  sha: string
+  shortSha: string
+  message: string
+  date: string
+  url: string
+}
+
+/** 默认分支最新 commit（per_page=1 即最新一条；与 CI poll-upstream 逻辑一致）。 */
+export async function getLatestCommit(): Promise<CommitInfo> {
+  const raw = (await ghFetch(`/repos/${REPO}/commits?per_page=1`)) as Array<{
+    sha: string
+    commit: { message: string; committer: { date: string } }
+    html_url: string
+  }>
+  const c = raw[0]
+  if (!c) throw new Error(`GitHub API returned no commits for ${REPO}`)
+  return {
+    sha: c.sha,
+    shortSha: c.sha.slice(0, 7),
+    message: (c.commit?.message ?? '').split('\n')[0],
+    date: c.commit?.committer?.date ?? '',
+    url: c.html_url,
+  }
+}
+
 /**
  * Semver-ish comparison for dsh versions (e.g. 0.1.1-rc.2 vs 0.1.0-rc.8).
  * Returns > 0 when a is newer than b.
