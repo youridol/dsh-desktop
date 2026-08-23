@@ -248,9 +248,12 @@ export async function ensureCommitInstalled(
   // pnpm 版源码位于 apps/cli。建 junction 使硬编码入口路径一致（零改动
   // manager / isVersionInstalled）。
   const scoped = path.join(dir, 'node_modules', '@deepseek-ai')
+  const linkPath = path.join(scoped, 'dsh')
+  const targetPath = path.join(dir, 'apps', 'cli')
   fs.mkdirSync(scoped, { recursive: true })
-  fs.rmSync(path.join(scoped, 'dsh'), { recursive: true, force: true })
-  const mklink = spawnSync('cmd.exe', ['/c', 'mklink', '/J', path.join(scoped, 'dsh'), path.join(dir, 'apps', 'cli')], {
+  fs.rmSync(linkPath, { recursive: true, force: true })
+  // mklink 的 target 相对路径基于 cmd 的 cwd（应用进程目录），必须用绝对路径
+  const mklink = spawnSync('cmd.exe', ['/c', 'mklink', '/J', linkPath, targetPath], {
     stdio: 'pipe',
     encoding: 'utf8',
     windowsHide: true,
