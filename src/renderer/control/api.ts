@@ -87,6 +87,9 @@ interface Bridge {
     hasUpdate: boolean
     releases: ReleaseInfo[]
     checkedAt: number
+    rateLimited?: boolean
+    rateLimitResetAt?: number
+    offline?: boolean
   }>
   downloadVersion: (version: string) => Promise<void>
   switchVersion: (version: string) => Promise<void>
