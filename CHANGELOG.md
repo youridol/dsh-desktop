@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.3.4] - 2026-08-25
+
+### 修复（捆绑运行时自愈）
+
+- **捆绑运行时不完整时自动重解压**（`src/main/dsh/install.ts`）：此前 `ensureBundledRuntime` 仅以 `@deepseek-ai/dsh` 目录存在 + `.extract-complete` 标记判断「已解压」，若某次解压不完整（如首次解压被中断/早期 tar 版本漏文件，缺 `dsh-app-boot` 或 `js-yaml`），已写标记会让残缺树被永久跳过，DSH spawn 时报 `ERR_MODULE_NOT_FOUND: Cannot find package 'js-yaml'`（Web 服务无法启动）：
+  - 新增 `bundledRuntimeComplete(dir)` 完整性门：解压树必须同时存在 `@deepseek-ai/dsh/lib/bin.js`、`@deepseek-ai/dsh-app-boot/lib/index.js`、`js-yaml/package.json`；
+  - `ensureBundledRuntime` 在解压前（含标记已存在时）与解压后双重校验，残缺则清目录从随包 tarball 重解压，解压结果校验通过才写标记（未通过不写、下次启动重试）；
+  - dev 模式下 `.dsh-runtime` 残缺时提示 `npm run fetch-dsh` 修复，不落入无人使用的解压路径；
+  - `switchTo('bundled')` 改用同一完整性判定（`versions.ts`），残缺树不再被当成可用运行时不预检放行；
+  - 新增 `test/install-runtime.test.mjs`（4 用例：空目录/仅 dsh 包判定、dev 完整分支、缺 tgz 分支）。
+
 ## [v0.3.3] - 2026-08-25
 
 ### 新增（内置插件预设）
