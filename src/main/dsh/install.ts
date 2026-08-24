@@ -7,6 +7,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { app } from 'electron'
 import { getPaths, npmCliPath, bundledDshDir, bundledExtractDir, runtimeTgzPath } from '../paths'
 import { installLog } from '../logger'
 import { nodeRuntime } from './nodebin'
@@ -18,33 +19,85 @@ export interface SpawnProgress {
 }
 
 /**
+ * Key files the bundled runtime must contain to boot. The DSH launcher loads
+ * @deepseek-ai/dsh (bin.js) which imports the boot tree; @deepseek-ai/dsh-app-boot
+ * imports js-yaml directly, so a tree missing any of these crashes with
+ * ERR_MODULE_NOT_FOUND at spawn even though the dsh package itself exists.
+ */
+const BUNDLED_REQUIRED = [
+  ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
+  ['node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js'],
+  ['node_modules', 'js-yaml', 'package.json'],
+] as const
+
+/**
+ * True when the extracted bundled runtime has all required entry files.
+ * The old completeness check only looked for the dsh package dir, so a
+ * partially extracted tree (crash / early tar version / stale marker) could
+ * pass and then fail at spawn. This is the gate used before and after extract.
+ */
+export function bundledRuntimeComplete(dir: string): boolean {
+  return BUNDLED_REQUIRED.every((parts) => fs.existsSync(path.join(dir, ...parts)))
+}
+
+/**
  * Extract the bundled runtime tarball into versions/_bundled on first launch.
  * Uses Windows' built-in bsdtar (System32\tar.exe, present since Win10 1803),
  * so no Node/tar dependency exists on the user machine.
+ *
+ * Self-healing: a stale .extract-complete marker or a partial tree is detected
+ * by bundledRuntimeComplete() and re-extracted from the shipped tarball, so an
+ * interrupted or incomplete first extraction cannot leave an unbootable
+ * runtime behind.
  */
 export function ensureBundledRuntime(): boolean {
-  if (bundledDshDir()) return true
-  const tgz = runtimeTgzPath()
-  if (!tgz) {
-    installLog.error('Bundled runtime tarball not found next to the app')
+  // Dev mode serves the bundled runtime straight from the checkout's
+  // .dsh-runtime (bundledDshDir points there); packaged mode extracts the
+  // shipped tarball into versions/_bundled. Completeness is checked against
+  // whichever directory is actually used, so dev keeps working without
+  // extracting anything.
+  const existing = bundledDshDir()
+  if (existing && bundledRuntimeComplete(existing)) return true
+  // Dev mode: a partial checkout .dsh-runtime cannot be healed by extracting
+  // into versions/_bundled (dev serves .dsh-runtime directly), so tell the
+  // developer to re-fetch instead of silently extracting an unused tree.
+  if (!app.isPackaged && existing) {
+    installLog.error('Bundled runtime (dev .dsh-runtime) is incomplete — run `npm run fetch-dsh` to repair')
     return false
   }
   const dest = bundledExtractDir()
-  const marker = path.join(dest, '.extract-complete')
-  if (!fs.existsSync(marker)) {
-    installLog.info(`Extracting bundled DSH runtime from ${tgz} (first launch, may take a minute)`)
-    fs.rmSync(dest, { recursive: true, force: true })
-    fs.mkdirSync(dest, { recursive: true })
-    const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
-    const res = spawnSync(tar, ['-xzf', tgz, '-C', dest], { stdio: 'pipe', encoding: 'utf8', windowsHide: true })
-    if (res.status !== 0) {
-      installLog.error(`Extraction failed: ${(res.stderr || res.stdout || '').slice(0, 500)}`)
-      return false
+  const tgz = runtimeTgzPath()
+  if (!tgz) {
+    if (fs.existsSync(path.join(dest, 'node_modules', '@deepseek-ai', 'dsh'))) {
+      installLog.error('Bundled runtime incomplete but its tarball is missing — DSH will fail to start')
+    } else {
+      installLog.error('Bundled runtime tarball not found next to the app')
     }
-    fs.writeFileSync(marker, new Date().toISOString())
-    installLog.info('Bundled runtime extracted successfully')
+    return false
   }
-  return !!bundledDshDir()
+  // Incomplete tree present (stale marker / partial extract): drop everything
+  // so the re-extract starts clean, matching the first-launch path.
+  if (existing || fs.existsSync(path.join(dest, '.extract-complete'))) {
+    installLog.warn('Bundled runtime incomplete — re-extracting from the shipped tarball')
+  }
+  installLog.info(`Extracting bundled DSH runtime from ${tgz} (first launch, may take a minute)`)
+  fs.rmSync(dest, { recursive: true, force: true })
+  fs.mkdirSync(dest, { recursive: true })
+  const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  const res = spawnSync(tar, ['-xzf', tgz, '-C', dest], { stdio: 'pipe', encoding: 'utf8', windowsHide: true })
+  if (res.status !== 0) {
+    installLog.error(`Extraction failed: ${(res.stderr || res.stdout || '').slice(0, 500)}`)
+    return false
+  }
+  // tar reports success but may still have dropped files — verify the tree is
+  // actually bootable before writing the marker.
+  if (!bundledRuntimeComplete(dest)) {
+    installLog.error('Extraction finished but the runtime tree is incomplete — will retry on next start')
+    return false
+  }
+  fs.writeFileSync(path.join(dest, '.extract-complete'), new Date().toISOString())
+  installLog.info('Bundled runtime extracted successfully')
+  return true
 }
 
 /** Run a command, line-buffer stdout+stderr into onLine, resolve on exit code 0. */

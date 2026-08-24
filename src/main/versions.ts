@@ -156,7 +156,7 @@ export async function switchTo(
     if (!isVersionInstalled(version)) {
       throw new Error(`版本 ${version} 未安装`)
     }
-  } else if (!bundledDshDir() && !ensureBundledRuntime()) {
+  } else if (!ensureBundledRuntime()) {
     throw new Error('捆绑版本不可用')
   }
   setConfig({ activeVersion: version })
