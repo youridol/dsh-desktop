@@ -15,7 +15,8 @@ export interface PluginRecord {
   /** Install source directory/file under pluginsDir. */
   dir: string
   enabled: boolean
-  source: 'local' | 'git'
+  /** 'preset' = 内置插件预设（清单自动安装，卸载即写入 suppressedPresets）。 */
+  source: 'local' | 'git' | 'preset'
   gitUrl?: string
   installedAt: number
   /** Dependency install failure reason; undefined when deps are installed/absent. */
@@ -28,6 +29,8 @@ export interface AppConfig {
   /** 'bundled' or an npm version string of a downloaded release. */
   activeVersion: string
   plugins: PluginRecord[]
+  /** 用户卸载过的内置插件预设 id；启动时跳过这些预设的自动安装。 */
+  suppressedPresets: string[]
   /** Floating ball offset from the main window's bottom-right corner (px). */
   ballOffset: { x: number; y: number } | null
   checkUpdatesOnStart: boolean
@@ -38,6 +41,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoStart: false,
   activeVersion: 'bundled',
   plugins: [],
+  suppressedPresets: [],
   ballOffset: null,
   checkUpdatesOnStart: true,
 }
@@ -70,6 +74,9 @@ function load(): AppConfig {
         (p): p is PluginRecord =>
           !!p && typeof p === 'object' && typeof p.id === 'string' && typeof p.entry === 'string',
       )
+    }
+    if (Array.isArray(raw.suppressedPresets) && raw.suppressedPresets.every((s) => typeof s === 'string')) {
+      merged.suppressedPresets = raw.suppressedPresets
     }
     if (raw.ballOffset && typeof raw.ballOffset === 'object' && typeof raw.ballOffset.x === 'number') {
       merged.ballOffset = raw.ballOffset

@@ -65,7 +65,7 @@ function renderItem(p: PluginView, toast: (msg: string, err?: boolean) => void):
 
   const sub = [
     p.missing ? '⚠ 入口缺失' : p.entry,
-    p.source === 'git' ? 'git' : '本地',
+    p.source === 'git' ? 'git' : p.source === 'preset' ? '内置' : '本地',
     p.description ?? '',
   ].filter(Boolean).join(' · ')
 
@@ -93,6 +93,7 @@ function renderItem(p: PluginView, toast: (msg: string, err?: boolean) => void):
       h('div', { class: 'name' }, document.createTextNode(p.id),
         p.missing ? h('span', { class: 'badge err', style: 'margin-left:8px' }, document.createTextNode('缺失')) : null,
         p.source === 'git' ? h('span', { class: 'badge accent', style: 'margin-left:8px' }, document.createTextNode('git')) : null,
+        p.source === 'preset' ? h('span', { class: 'badge accent', style: 'margin-left:8px' }, document.createTextNode('内置')) : null,
       ),
       h('div', { class: 'sub mono', title: p.entry }, document.createTextNode(sub)),
       depsErr,

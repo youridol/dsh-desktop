@@ -12,6 +12,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 - **悬浮球控制面板**：主窗口右下角悬浮球（可拖动、位置记忆，`src/main/windows/floating.ts`），单击开关独立子窗口控制面板（`src/main/windows/control.ts`，无任务栏项、随主窗口隐藏与恢复）。
 - **插件管理**（`src/main/plugins.ts` + `src/renderer/control/tabs/plugins.ts`）：
   - 从本地目录 / `.js` 文件安装，或从 Git 仓库浅克隆安装（私有仓库可配置 GitHub 凭据）；
+  - **内置插件预设**（`src/main/builtin-plugins.ts`）：首次启动自动安装并默认启用 `@siliconflow-official/dsh-llm-siliconflow`（幂等，仅缺装/版本不符时下载与装依赖），卸载后不再自动出现（`suppressedPresets`，手工移除 `config.json` 对应项可恢复）；
   - 自动生成 `cordis.patch.yml`（插件入口为绝对路径），一键"应用并重启 DSH"；
   - 启用 / 停用 / 卸载，加载日志实时查看。
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。

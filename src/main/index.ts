@@ -15,6 +15,7 @@ import { createFloatingBall, syncBallVisibility, destroyFloatingBall } from './w
 import { createControlPanel, destroyControlPanel } from './windows/control'
 import { createTray, destroyTray } from './tray'
 import { setAutoStart } from './autostart'
+import { ensureBuiltinPluginsInstalled } from './builtin-plugins'
 import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import { mainWindowEvents } from './windows/main'
@@ -46,6 +47,13 @@ if (!gotLock) {
     // Keep the floating ball in step with main-window visibility.
     mainWindowEvents.on('hidden-to-tray', () => syncBallVisibility())
     mainWindowEvents.on('restored', () => syncBallVisibility())
+
+    // 内置插件预设：首次启动自动安装并默认启用（幂等，已就绪时零网络/零 npm）。
+    // ensureBuiltinPluginsInstalled 内部全捕获异常，任何失败都不会中断启动。
+    const presets = await ensureBuiltinPluginsInstalled()
+    if (presets.failed.length > 0) {
+      appLog.warn(`内置插件安装失败：${presets.failed.map((f) => `${f.id}: ${f.reason}`).join('; ')}`)
+    }
 
     // Honor stored auto-start preference in case the exe moved (portable).
     if (app.isPackaged && getConfig().autoStart) setAutoStart(true)

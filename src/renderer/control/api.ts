@@ -8,7 +8,7 @@ export interface PluginView {
   entry: string
   dir: string
   enabled: boolean
-  source: 'local' | 'git'
+  source: 'local' | 'git' | 'preset'
   gitUrl?: string
   installedAt: number
   missing: boolean

@@ -64,7 +64,7 @@ function readPackageMeta(dir: string): { name?: string; description?: string; ve
 }
 
 /** Resolve the plugin entry file for an installed dir/file under pluginsDir. */
-function resolveEntry(installedPath: string): string | null {
+export function resolveEntry(installedPath: string): string | null {
   const stat = fs.statSync(installedPath, { throwIfNoEntry: false })
   if (!stat) return null
   if (stat.isFile()) {
@@ -364,6 +364,11 @@ export function removePlugin(id: string): void {
   }
   mutateConfig((draft) => {
     draft.plugins = draft.plugins.filter((p) => p.id !== id)
+    // 内置预设卸载后写抑制标记，避免下次启动自动重装；恢复方式 = 手工移除
+    // config.json 的 suppressedPresets 对应项后重启（本期无恢复 UI）。
+    if (rec.source === 'preset' && !draft.suppressedPresets.includes(id)) {
+      draft.suppressedPresets.push(id)
+    }
   })
   appLog.info(`Removed plugin ${id}`)
 }

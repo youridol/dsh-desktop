@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.3.3] - 2026-08-25
+
+### 新增（内置插件预设）
+
+- **内置插件预设**（`src/main/builtin-plugins.ts`）：dsh-desktop 内置 `@siliconflow-official/dsh-llm-siliconflow` 插件清单，应用启动时幂等安装并默认启用，随后经既有 patch overlay 自动挂载进 DSH——安装完成即出现「内置」来源的 `llm-siliconflow` 插件（控制面板可启停/卸载，来源徽标「内置」），DSH Web 模型/提供方选择器出现 `SiliconFlow` 提供方路由，用户全程零操作：
+  - 清单锁定版本（`0.2.0-rc.1`），与插件目录内 `package.json` 版本比对决定是否重装；已就绪时启动检查零网络、零 npm（仅读目录 + 读一个 `package.json` + 一次入口检查）；
+  - 安装编排：下载固定 registry tarball（60s 超时）→ `rmRobust` 替换旧目录 → 系统 `tar.exe` 解压（`--strip-components=1`）→ `resolveEntry` 校验后写 `PluginRecord`（`source: 'preset'`、`enabled: true`）→ 依赖安装（沿用 `installPluginDeps` 串行队列，npm ≥ 7 自动装 peerDependencies）；
+  - 失败隔离：任一环节失败仅 `appLog.warn` 告警（中文原因，如「tarball 下载失败: …」），不写虚假记录、不阻断应用与 DSH 启动（DSH 无启用插件时按现状不带 `--patch` 启动）；
+  - 卸载抑制：卸载 preset 插件时写入 `config.json` 的 `suppressedPresets`，重启不再自动重装（恢复方式：手工移除 `suppressedPresets` 对应项后重启，本期无恢复 UI）。
+
 ## [v0.3.2] - 2026-08-24
 
 ### 修复（插件管理模块）
