@@ -83,7 +83,7 @@ interface Bridge {
 
   listPlugins: () => Promise<PluginView[]>
   addLocalPlugin: () => Promise<PluginView | null>
-  addGitPlugin: (url: string) => Promise<PluginView>
+  addGitPlugin: (url: string) => Promise<PluginView[]>
   setPluginEnabled: (id: string, enabled: boolean) => Promise<PluginView[]>
   removePlugin: (id: string) => Promise<PluginView[]>
   applyPlugins: () => Promise<DshStatus>

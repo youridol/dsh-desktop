@@ -4,7 +4,7 @@
  * plugin guide. Enabled plugins are written into a generated cordis patch
  * overlay with ABSOLUTE entry paths, passed to `dsh web --patch`.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -175,8 +175,67 @@ function gitAvailable(): boolean {
   return res.status === 0
 }
 
-/** Clone a plugin repo into pluginsDir (shallow), using stored GitHub creds when the URL is github.com. */
-export function addGitPlugin(repoUrl: string): Promise<PluginView> {
+/** Common monorepo subdirectory patterns to scan when root has no plugin entry. */
+const MONOREPO_PATTERNS = ['packages', 'plugins']
+
+/**
+ * Scan known monorepo subdirectories under `repoDir` for valid plugin entries.
+ * Returns an array of absolute paths to subdirectories that contain a plugin entry.
+ */
+function scanSubdirPlugins(repoDir: string): string[] {
+  const found: string[] = []
+  for (const pattern of MONOREPO_PATTERNS) {
+    const subdir = path.join(repoDir, pattern)
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(subdir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      const candidate = path.join(subdir, entry.name)
+      if (resolveEntry(candidate)) found.push(candidate)
+    }
+  }
+  return found
+}
+
+/**
+ * Clone a git repo asynchronously (does not block the Electron main thread).
+ */
+function cloneGitAsync(cloneUrl: string, target: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('git', ['clone', '--depth', '1', cloneUrl, target], {
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
+    const chunks: Buffer[] = []
+    proc.stdout?.on('data', (c: Buffer) => chunks.push(c))
+    proc.stderr?.on('data', (c: Buffer) => chunks.push(c))
+    const timer = setTimeout(() => {
+      proc.kill()
+      reject(new Error('git clone 超时（5 分钟）'))
+    }, 5 * 60_000)
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve()
+      else reject(new Error(`git clone 失败: ${Buffer.concat(chunks).toString('utf8').slice(0, 500)}`))
+    })
+    proc.on('error', (err) => {
+      clearTimeout(timer)
+      reject(new Error(`git clone 执行失败: ${err.message}`))
+    })
+  })
+}
+
+/**
+ * Clone a plugin repo into pluginsDir (shallow), using stored GitHub creds when the URL is github.com.
+ * Supports monorepo layouts — if the repo root has no plugin entry, scans `packages/*` and `plugins/*`
+ * subdirectories and installs every valid plugin found.
+ * Returns an array (may contain multiple plugins for monorepos).
+ */
+export function addGitPlugin(repoUrl: string): Promise<PluginView[]> {
   return (async () => {
     if (!gitAvailable()) throw new Error('未检测到 git，请先安装 Git')
     if (!/^https?:\/\//.test(repoUrl)) throw new Error('仅支持 https:// 开头的仓库地址')
@@ -199,42 +258,69 @@ export function addGitPlugin(repoUrl: string): Promise<PluginView> {
 
     const repoName = repoUrl.replace(/[\\/]+$/, '').split('/').pop() ?? 'plugin'
     const name = repoName.replace(/\.git$/, '')
-    const target = uniqueTargetDir(path.join(pluginsDir, name))
+    const cloneTarget = uniqueTargetDir(path.join(pluginsDir, name))
     appLog.info(`Cloning plugin from ${repoUrl} (credentials never logged)`)
 
-    const res = spawnSync('git', ['clone', '--depth', '1', cloneUrl, target], {
-      encoding: 'utf8',
-      timeout: 5 * 60_000,
-      windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    })
-    if (res.status !== 0) {
-      rmRobust(target)
-      throw new Error(`git clone 失败: ${(res.stderr || res.stdout || '').slice(0, 500)}`)
+    await cloneGitAsync(cloneUrl, cloneTarget)
+    rmRobust(path.join(cloneTarget, '.git'))
+
+    // Try root-level plugin entry first
+    const rootEntry = resolveEntry(cloneTarget)
+    if (rootEntry) {
+      const meta = readPackageMeta(cloneTarget)
+      const id = meta.name ?? name
+      const record: PluginRecord = {
+        id,
+        entry: rootEntry,
+        dir: cloneTarget,
+        enabled: true,
+        source: 'git',
+        gitUrl: repoUrl,
+        installedAt: Date.now(),
+      }
+      mutateConfig((draft) => {
+        draft.plugins = draft.plugins.filter((p) => p.dir !== cloneTarget)
+        draft.plugins.push(record)
+      })
+      appLog.info(`Installed git plugin ${id} -> ${rootEntry}`)
+      return [{ ...record, missing: false, description: meta.description, version: meta.version }]
     }
-    rmRobust(path.join(target, '.git'))
-    const entry = resolveEntry(target)
-    if (!entry) {
-      rmRobust(target)
-      throw new Error('仓库中未找到插件入口（package.json main / index.js）')
+
+    // Root has no plugin entry — scan monorepo subdirectories
+    const subdirs = scanSubdirPlugins(cloneTarget)
+    if (subdirs.length === 0) {
+      rmRobust(cloneTarget)
+      throw new Error('仓库中未找到插件入口（根目录及 packages/*/ plugins/*/ 均无有效插件）')
     }
-    const meta = readPackageMeta(target)
-    const id = meta.name ?? name
-    const record: PluginRecord = {
-      id,
-      entry,
-      dir: target,
-      enabled: true,
-      source: 'git',
-      gitUrl: repoUrl,
-      installedAt: Date.now(),
+
+    const views: PluginView[] = []
+    for (const subdir of subdirs) {
+      const entry = resolveEntry(subdir)!
+      const meta = readPackageMeta(subdir)
+      const subName = path.basename(subdir)
+      const id = meta.name ?? subName
+      const target = uniqueTargetDir(path.join(pluginsDir, subName))
+      fs.cpSync(subdir, target, { recursive: true })
+      const resolvedEntry = resolveEntry(target) ?? entry
+      const record: PluginRecord = {
+        id,
+        entry: resolvedEntry,
+        dir: target,
+        enabled: true,
+        source: 'git',
+        gitUrl: repoUrl,
+        installedAt: Date.now(),
+      }
+      mutateConfig((draft) => {
+        draft.plugins = draft.plugins.filter((p) => p.dir !== target)
+        draft.plugins.push(record)
+      })
+      appLog.info(`Installed git plugin ${id} from ${subName} -> ${resolvedEntry}`)
+      views.push({ ...record, missing: false, description: meta.description, version: meta.version })
     }
-    mutateConfig((draft) => {
-      draft.plugins = draft.plugins.filter((p) => p.dir !== target)
-      draft.plugins.push(record)
-    })
-    appLog.info(`Installed git plugin ${id} -> ${entry}`)
-    return { ...record, missing: false, description: meta.description, version: meta.version }
+    // Clean up the bare clone — plugins have been copied to their own directories
+    rmRobust(cloneTarget)
+    return views
   })()
 }
 
@@ -248,7 +334,11 @@ export function setPluginEnabled(id: string, enabled: boolean): void {
 export function removePlugin(id: string): void {
   const rec = getConfig().plugins.find((p) => p.id === id)
   if (!rec) return
-  rmRobust(rec.dir)
+  try {
+    rmRobust(rec.dir)
+  } catch (err) {
+    appLog.warn(`Failed to delete plugin dir ${rec.dir}: ${err}`)
+  }
   mutateConfig((draft) => {
     draft.plugins = draft.plugins.filter((p) => p.id !== id)
   })

@@ -109,8 +109,9 @@ async function installGit(toast: (msg: string, err?: boolean) => void): Promise<
   if (!url) return toast('请输入仓库地址', true)
   gitInput.disabled = true
   try {
-    const p = await bridge().addGitPlugin(url)
-    toast(`已克隆插件 ${p.id}，点击“应用并重启 DSH”生效`)
+    const installed = await bridge().addGitPlugin(url)
+    const names = installed.map((p) => p.id).join('、')
+    toast(`已克隆 ${installed.length} 个插件：${names}，点击“应用并重启 DSH”生效`)
     gitInput.value = ''
     await refresh()
   } catch (err) {

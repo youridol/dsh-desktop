@@ -14,6 +14,9 @@ runtime/
 .dsh-probe/
 *.log
 
+# Local agent workspace
+.zcode/
+
 # OS junk
 Thumbs.db
 .DESKTOP-INI
