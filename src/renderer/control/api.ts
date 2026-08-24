@@ -14,6 +14,8 @@ export interface PluginView {
   missing: boolean
   description?: string
   version?: string
+  /** Dependency install failure reason, if any. */
+  depsError?: string
 }
 
 export interface DshStatus {

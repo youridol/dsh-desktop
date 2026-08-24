@@ -18,6 +18,8 @@ export interface PluginRecord {
   source: 'local' | 'git'
   gitUrl?: string
   installedAt: number
+  /** Dependency install failure reason; undefined when deps are installed/absent. */
+  depsError?: string
 }
 
 export interface AppConfig {

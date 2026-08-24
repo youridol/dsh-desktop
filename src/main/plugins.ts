@@ -10,6 +10,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPaths } from './paths'
 import { getConfig, mutateConfig, type PluginRecord } from './config'
+import { installPluginDeps } from './plugin-deps'
 import { appLog } from './logger'
 
 /**
@@ -113,6 +114,7 @@ export function listPlugins(): PluginView[] {
         missing: entry === null,
         description: meta.description,
         version: meta.version,
+        depsError: rec?.depsError,
       })
     }
   } catch {
@@ -138,6 +140,24 @@ function uniqueTargetDir(base: string): string {
     candidate = path.join(parent, `${stem}-${i++}${ext}`)
   }
   return candidate
+}
+
+/** Record (or clear) a plugin's dependency install failure in config. */
+export function setPluginDepsError(dir: string, error: string | undefined): void {
+  mutateConfig((draft) => {
+    const rec = draft.plugins.find((r) => r.dir === dir)
+    if (rec) rec.depsError = error
+  })
+}
+
+/**
+ * Trigger the dependency install after a plugin copy and persist the outcome.
+ * Runs async — a failed install never blocks or throws from the plugin install
+ * flow itself; the error surfaces via PluginView.depsError.
+ */
+async function installDepsForPlugin(dir: string): Promise<void> {
+  const res = await installPluginDeps(dir)
+  setPluginDepsError(dir, res.status === 'failed' ? (res.error ?? '依赖安装失败') : undefined)
 }
 
 /** Install a plugin from a local directory or file path chosen by the user. */
@@ -167,6 +187,7 @@ export function addLocalPlugin(srcPath: string): PluginView {
     draft.plugins.push(record)
   })
   appLog.info(`Installed local plugin ${id} -> ${entry}`)
+  void installDepsForPlugin(target)
   return { ...record, missing: false, description: meta.description, version: meta.version }
 }
 
@@ -283,6 +304,7 @@ export function addGitPlugin(repoUrl: string): Promise<PluginView[]> {
         draft.plugins.push(record)
       })
       appLog.info(`Installed git plugin ${id} -> ${rootEntry}`)
+      void installDepsForPlugin(cloneTarget)
       return [{ ...record, missing: false, description: meta.description, version: meta.version }]
     }
 
@@ -316,6 +338,7 @@ export function addGitPlugin(repoUrl: string): Promise<PluginView[]> {
         draft.plugins.push(record)
       })
       appLog.info(`Installed git plugin ${id} from ${subName} -> ${resolvedEntry}`)
+      void installDepsForPlugin(target)
       views.push({ ...record, missing: false, description: meta.description, version: meta.version })
     }
     // Clean up the bare clone — plugins have been copied to their own directories

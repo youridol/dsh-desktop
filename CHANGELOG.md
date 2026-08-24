@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.3.2] - 2026-08-24
+
+### 修复（插件管理模块）
+
+- **插件依赖未安装导致 DSH 启动即崩溃（crashed code 1）**：安装本地/Git 插件只拷贝源码目录，未安装其 npm `dependencies`（如 `@deepseek-ai/dsh-tools`），DSH 启动时 cordis 加载器 import 插件入口抛 `ERR_MODULE_NOT_FOUND`、进程退出。现新增 `src/main/plugin-deps.ts` 依赖探测与串行安装：`needsDepsInstall` 纯同步探测（零网络），`installPluginDeps` 串行执行 `npm install`（npm 解析顺序：Node 同目录自带 npm → 捆绑运行时 vendored npm → PATH 上 npm；10 分钟超时杀进程树；失败返回中文摘要 + stderr 末 500 字符）；本地/Git 插件（含 monorepo 子插件）安装完成后异步触发依赖安装；启动前 `ensureEnabledPluginsReady` 对启用插件补装缺失依赖，安装失败插件从本次 patch overlay 剔除、继续启动其余插件，失败原因写入插件记录 `depsError` 并在控制面板展示「依赖安装失败：<原因>」、聚合进 `DshStatus.detail`；依赖已满足时零 npm 调用、无额外启动延迟。
+
 ## [v0.3.1] - 2026-08-24
 
 ### 修复（插件管理模块）

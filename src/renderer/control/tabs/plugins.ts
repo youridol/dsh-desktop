@@ -69,6 +69,14 @@ function renderItem(p: PluginView, toast: (msg: string, err?: boolean) => void):
     p.description ?? '',
   ].filter(Boolean).join(' · ')
 
+  const depsErr = p.depsError
+    ? h('div', {
+        class: 'sub',
+        title: p.depsError,
+        style: 'color:var(--danger)',
+      }, document.createTextNode(`依赖安装失败：${p.depsError}`))
+    : null
+
   const remove = h('button', {
     class: 'btn danger small',
     onclick: async () => {
@@ -87,6 +95,7 @@ function renderItem(p: PluginView, toast: (msg: string, err?: boolean) => void):
         p.source === 'git' ? h('span', { class: 'badge accent', style: 'margin-left:8px' }, document.createTextNode('git')) : null,
       ),
       h('div', { class: 'sub mono', title: p.entry }, document.createTextNode(sub)),
+      depsErr,
     ),
     remove,
   )
