@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.4.0] - 2026-08-25
+
+### 重构（插件管理迁移到 dsh harness 上游插件机制）
+
+dsh-desktop 不再自行实现插件安装/依赖/加载链路，改为 **dsh harness web 插件的桌面端衍生管理工具**：所有插件操作经 dsh harness 上游 `dsh plugin --profile web` CLI（内部转发 pnpm，npm/npx 包解析与依赖安装全部交给 dsh harness），插件列表实时读取 Web profile manifest（`$DSH_HOME/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles`）。dsh-desktop 只做 CLI 调用方（安全参数数组、超时、stdout/stderr/exitCode 处理）与 UI 封装，未修改任何上游代码。
+
+- **新增 `src/main/services/dsh/DshCommandExecutor.ts`**：安全 dsh CLI 执行器——参数数组（严禁 shell 拼接，防命令注入）、stdout/stderr/exitCode 捕获、超时与进程树终止、错误结构化；dsh bin 经当前激活版本运行时解析（`resolveActiveDir` 回退捆绑版）。
+- **新增 `src/main/services/dsh/DshPluginService.ts`**：profile 插件服务——`listPlugins`（读 manifest 汇总 installed + enabled + isBundle + version + description）、`addPlugin`（`dsh plugin --profile web add <包名>`，包名合法性校验）、`removePlugin`/`uninstallPlugin`（`… remove <包名>`）、`enablePlugin`/`disablePlugin`（加/移 `dsh.profile.bundles`，仅改 manifest 不卸载包）、`exportPluginInfo`（读已装包 package.json 元数据，用于「导出 = 复制 包名@版本」）。
+- **IPC 精简**（`src/main/ipc.ts`）：路由改为 `plugins:list/add/remove/enable/disable/uninstall/export/apply`；**删除** `plugins:addLocal`（本地目录对话框安装）与 `plugins:addGit`（GitHub URL 克隆安装）两个通道；renderer 不可执行 shell 的边界不变。
+- **控制面板插件页重写**（`src/renderer/control/tabs/plugins.ts`）：移除「从本地目录安装…」「从 Git 仓库克隆」入口，改为 npm 包名输入 + 安装按钮；插件条目展示 包名 / 版本 / 插件层徽标 / 启用-禁用开关 / 卸载 / 导出（复制到剪贴板）/ 刷新；统一 idle→loading→success→error 状态处理。
+- **DSH 启动不再用 `--patch` overlay**（`src/main/dsh/manager.ts`）：删除 `writePatchOverlay` 调用与 `ensureEnabledPluginsReady`（不再逐插件自行 npm install）；spawn 简化为 `dsh web --no-open --port <n>`，插件由 Web profile 在启动时自动挂载。
+- **删除旧机制**：`src/main/builtin-plugins.ts`（内置预设 llm-siliconflow 的 tarball 下载/解压/依赖安装循环）、`src/main/plugin-deps.ts`（自管 npm 依赖安装）、`src/main/plugins.ts` 的 `addLocalPlugin`/`addGitPlugin`/`writePatchOverlay`/`setPluginDepsError`/`listPlugins`/`setPluginEnabled`/`removePlugin`（仅保留 `rmRobust`）、`config.ts` 的 `suppressedPresets` 与 `source: 'preset'`；对应 UI / IPC / preload / 测试一并移除。`.e2e` 驱动 `scripts/e2e-driver.mjs` 同步替换为 `add/enable/disable/uninstall/export` 步骤。
+- **测试**：删除 `test/builtin-plugins.test.mjs`、`test/plugin-deps.test.mjs`；新增 `test/plugin-service.test.mjs`（12 用例：manifest 读取/排序、enable/disable 幂等、export、缺文件容错，均以临时 DSH_HOME 隔离）。
+- **文档同步**：README.md 与 docs/ARCHITECTURE.md / docs/DEPLOYMENT.md 移除本地目录 / Git 克隆 / patch overlay / 内置预设描述，改为 dsh profile 插件机制说明。
+
 ## [v0.3.4] - 2026-08-25
 
 ### 修复（捆绑运行时自愈）
