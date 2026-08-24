@@ -7,7 +7,7 @@
 | 操作系统 | Windows x64 | 打包目标仅 `--win x64`；运行时解包依赖 Win10 1803+ 内置 `System32\tar.exe` | `package.json` `dist:nsis`/`dist:zip`、`src/main/dsh/install.ts` |
 | 构建机 Node.js | ≥ 20（CI 使用 Node 22） | `README.original.md` 构建说明；`.github/workflows/build-and-release.yml` 的 `node-version: 22` | `README.original.md`、`.github/workflows/` |
 | 构建机 npm | 与 Node 配套 | 依赖锁为 `package-lock.json`（lockfileVersion 3），构建环境用 `npm ci` | `package-lock.json`、`.github/workflows/build-and-release.yml` |
-| 构建机 Git | 有 | 源码 commit 安装通道与 CI checkout 需要 Git；插件 Git 安装要求目标机有 Git | `src/main/plugins.ts` `gitAvailable`、`.github/workflows/` |
+| 构建机 Git | 有 | 源码 commit 安装通道与 CI checkout 需要 Git | `.github/workflows/` |
 | 运行机 | 不要求 Node / Git / npm | 应用自带回退运行时不依赖系统 Node（`ELECTRON_RUN_AS_NODE`）；版本安装用内置 npm CLI | `src/main/dsh/nodebin.ts`、`src/main/dsh/install.ts` |
 | 硬件最低配置 | 无特殊声明 | 项目未声明最低硬件需求；服务为本地 127.0.0.1 端口，占用资源即 DSH 进程本身 | — |
 | 网络 | 构建期需访问 registry.npmjs.org 与 GitHub API | 安装依赖、fetch-dsh、electron-builder 下载工具链均需网络 | `scripts/fetch-dsh.mjs`、`.npmrc` |
@@ -112,9 +112,9 @@ npm run dist:zip        # electron-builder --win zip  --x64 -> release/zip/
 
 | 文件 | 默认内容 | 说明 | 来源 |
 | --- | --- | --- | --- |
-| `config.json` | `{ port: 3080, autoStart: false, activeVersion: \"bundled\", plugins: [], ballOffset: null, checkUpdatesOnStart: true }` | 应用设置，原子写入（临时文件 + rename）；字段级校验回退 | `src/main/config.ts` `DEFAULT_CONFIG` |
+| `config.json` | `{ port: 3080, autoStart: false, activeVersion: \"bundled\", plugins: [], ballOffset: null, checkUpdatesOnStart: true }` | 应用设置，原子写入（临时文件 + rename）；字段级校验回退；`plugins` 数组仅保留旧版本兼容（插件管理已迁移到 dsh profile） | `src/main/config.ts` `DEFAULT_CONFIG` |
 | `credentials.json` | `{}` | GitHub 凭据（用户名 + Token），**明文**存于运行目录，不随配置传播、不入库 | `src/main/config.ts` `readCredentials` / `writeCredentials` |
-| `cordis.patch.yml` | 自动生成 | 启用插件的 patch overlay（绝对路径 / `file://` URL），传给 `dsh web --patch` | `src/main/plugins.ts` `writePatchOverlay` |
+| `（插件由 dsh 管理）` | — | 插件本体与状态存于 dsh harness 的 Web profile（`$DSH_HOME/profiles/web/`），不在运行目录；插件操作经 `dsh plugin --profile web` CLI（`src/main/services/dsh/DshPluginService.ts`） | `src/main/services/dsh/` |
 | `logs/main.log` | 追加写入 | 应用 / DSH / 安装三类日志镜像 | `src/main/logger.ts` `initLogger` |
 
 运行目录随安装方式变化：NSIS 装 → `%APPDATA%\DSH Desktop\`；便携版 → exe 同目录；开发 → 项目 `runtime\`（`src/main/paths.ts` 的 `resolveRuntimeDir`）。

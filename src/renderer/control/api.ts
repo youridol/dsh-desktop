@@ -5,17 +5,25 @@
 
 export interface PluginView {
   id: string
-  entry: string
-  dir: string
+  packageName: string
+  version: string | null
   enabled: boolean
-  source: 'local' | 'git' | 'preset'
-  gitUrl?: string
-  installedAt: number
-  missing: boolean
-  description?: string
-  version?: string
-  /** Dependency install failure reason, if any. */
-  depsError?: string
+  isBundle: boolean
+  description: string | null
+  source: 'npm' | 'local' | 'unknown'
+  installDir: string | null
+  error?: string
+}
+
+export interface PluginListResult {
+  plugins: PluginView[]
+  profileDir: string
+}
+
+export interface ExportInfo {
+  packageName: string
+  version: string | null
+  description: string | null
 }
 
 export interface DshStatus {
@@ -83,11 +91,13 @@ interface Bridge {
   stop: () => Promise<void>
   restart: () => Promise<void>
 
-  listPlugins: () => Promise<PluginView[]>
-  addLocalPlugin: () => Promise<PluginView | null>
-  addGitPlugin: (url: string) => Promise<PluginView[]>
-  setPluginEnabled: (id: string, enabled: boolean) => Promise<PluginView[]>
-  removePlugin: (id: string) => Promise<PluginView[]>
+  listPlugins: () => Promise<PluginListResult>
+  addPlugin: (name: string) => Promise<PluginView[]>
+  removePlugin: (id: string) => Promise<PluginListResult>
+  enablePlugin: (id: string) => Promise<PluginListResult>
+  disablePlugin: (id: string) => Promise<PluginListResult>
+  uninstallPlugin: (id: string) => Promise<PluginListResult>
+  exportPlugin: (id: string) => Promise<ExportInfo | null>
   applyPlugins: () => Promise<DshStatus>
 
   listVersions: () => Promise<InstalledVersion[]>

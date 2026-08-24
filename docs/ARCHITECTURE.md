@@ -14,7 +14,7 @@ flowchart TB
         DSHMGR["dsh/manager.ts DSH 生命周期"]
         DSHINST["dsh/install.ts 版本安装<br/>（npm 安装 / 源码构建 / 运行时解包）"]
         DSHREL["dsh/releases.ts GitHub Releases 客户端"]
-        PLUGINS["plugins.ts 插件管理 + patch overlay"]
+        PLUGINS["services/dsh/ 插件管理<br/>（dsh CLI 调用方 + profile 读取）"]
         VERSIONS["versions.ts 版本管理"]
     end
 
@@ -63,7 +63,7 @@ flowchart TB
     ENTRY --> CFG
 ```
 
-> 说明：图中每个模块（`index.ts` / `ipc.ts` / `windows/` / `tray.ts` / `autostart.ts` / `config.ts` / `paths.ts` / `logger.ts` / `dsh/manager.ts` / `dsh/install.ts` / `dsh/releases.ts` / `plugins.ts` / `versions.ts` / `src/preload/` / `src/renderer/` 各页面）均可在下方目录结构（第 5 节）中定位。
+> 说明：图中每个模块（`index.ts` / `ipc.ts` / `windows/` / `tray.ts` / `autostart.ts` / `config.ts` / `paths.ts` / `logger.ts` / `dsh/manager.ts` / `dsh/install.ts` / `dsh/releases.ts` / `services/dsh/` / `versions.ts` / `src/preload/` / `src/renderer/` 各页面）均可在下方目录结构（第 5 节）中定位。
 
 ## 2. 模块职责矩阵
 
@@ -74,11 +74,11 @@ flowchart TB
 | 配置存储 | `config.json` 原子写入；字段级校验回退；配置变更事件；凭据文件读写（隔离于配置） | `src/main/config.ts` |
 | 日志 | 环形缓冲（4000 行）+ 事件推送 + 镜像到 `logs/main.log`；应用 / DSH / 安装三类来源 | `src/main/logger.ts` |
 | IPC 注册 | 全部 `ipcMain.handle/on` 通道；日志与状态订阅推送 | `src/main/ipc.ts` |
-| DSH 生命周期 | spawn `dsh web --patch --no-open --port`；端口轮询（10s 超时，300ms 间隔）；`taskkill /T` 结束进程树；状态机（stopped/starting/running/stopping/crashed/timeout/error） | `src/main/dsh/manager.ts` |
+| DSH 生命周期 | spawn `dsh web --no-open --port`；端口轮询（10s 超时，300ms 间隔）；`taskkill /T` 结束进程树；状态机（stopped/starting/running/stopping/crashed/timeout/error） | `src/main/dsh/manager.ts` |
 | 版本安装 | npm 版本安装（内置 npm CLI）；源码 commit 安装（codeload 下载 → pnpm install/build → 布局 junction）；捆绑运行时首次解包（`System32\tar.exe`）；junction 安全删除 | `src/main/dsh/install.ts` |
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
-| 插件管理 | 本地 / Git 安装、启停、卸载；入口解析；生成 `cordis.patch.yml` overlay（Windows 下用 `file://` URL） | `src/main/plugins.ts` |
+| 插件管理 | dsh harness Web profile 的桌面端管理：`dsh plugin --profile web` CLI 调用（安装 / 卸载）+ profile manifest 读写（列表 / 启用 / 禁用）+ 导出 | `src/main/services/dsh/DshPluginService.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |
@@ -113,24 +113,29 @@ flowchart TB
   → createFloatingBall() / createControlPanel() / createTray()
   → dsh.start()：
       activeVersion=bundled → ensureBundledRuntime()（首启用 tar.exe 解包 dsh-runtime.tgz）
-      → spawn node dsh web --patch <overlay> --no-open --port <port>
+      → spawn node dsh web --no-open --port <port>（插件经 Web profile 自动挂载）
       → pollReady：每 300ms GET http://127.0.0.1:<port>，10s 超时
       → 就绪 → mainWindowEvents 驱动 syncNavigation()：loader 页 → loadURL(DSH UI)
 ```
 
-### 3.2 插件管理流程（输入：用户安装 / 启停 / 应用）
+### 3.2 插件管理流程（输入：用户安装 / 启停 / 启用禁用 / 导出）
+
+dsh-desktop 是 dsh harness 上游插件机制的派生管理工具（`src/main/services/dsh/`），不自行实现插件的安装/依赖/加载：
 
 ```
-安装（本地目录 / .js / Git clone，plugins.ts）
-  → 复制 / clone 到 runtimeDir/plugins/<name>
-  → resolveEntry() 解析入口（package.json main / index.js / …）
-  → 写入 config.json（PluginRecord：id/entry/dir/enabled/source/…）
-  → 状态回传控制面板 UI
+安装（plugins:add，DshPluginService）
+  → 校验 npm 包名 → dsh plugin --profile web add <name>
+       （dsh 转发 pnpm：解析/下载/依赖交给 dsh harness）
+  → 读取 $DSH_HOME/profiles/web/package.json（dependencies + dsh.profile.bundles）
+  → 转换为 PluginView 回传控制面板 UI
 
-“应用并重启”（plugins:apply）
-  → writePatchOverlay()：按启用插件写 cordis.patch.yml（绝对路径 / file:// URL）
-  → dsh.restart()：taskkill /T → 重新 spawn（带 --patch 参数）
-  → DSH 加载插件，输出经 logger 回传日志页
+启用 / 禁用（plugins:enable / plugins:disable）
+  → 将包名加入 / 移出 profile manifest 的 dsh.profile.bundles
+  → 重启 DSH 后由 dsh harness 挂载 / 卸载该 bundle 层
+
+卸载 / 导出（plugins:uninstall / plugins:export）
+  → dsh plugin --profile web remove <name>（pnpm remove + 调和 bundles）
+  → 导出 = 读取已安装包 package.json 元数据（复制 包名@版本 到剪贴板）
 ```
 
 ### 3.3 版本管理流程（输入：用户检查 / 下载 / 切换）
@@ -233,4 +238,4 @@ dsh-desktop/
 | NSIS 安装版 | `%APPDATA%\DSH Desktop\` | `index.ts` 的 `app.setPath('userData', …)` |
 | zip 便携版 | exe 所在目录 | `resources/portable.marker` 存在 |
 
-目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`plugins/`、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）、`cordis.patch.yml`（自动生成的插件 overlay）。
+目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）。插件本体与装载不再存于本目录——全部经 dsh harness Web profile（`$DSH_HOME/profiles/web/`）管理，由 dsh CLI 与 profile manifest 统一负责。

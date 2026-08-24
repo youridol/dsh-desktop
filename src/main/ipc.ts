@@ -2,13 +2,13 @@
  * IPC surface. One registration point; preload bridges expose narrow,
  * window-specific APIs. Log/status updates are pushed to subscribed windows.
  */
-import { dialog, ipcMain, app, type WebContents } from 'electron'
+import { ipcMain, app, type WebContents } from 'electron'
 import { getPaths } from './paths'
 import { getConfig, setConfig, readCredentials, writeCredentials } from './config'
 import { logEvents, recentLogs, clearLogs } from './logger'
 import * as dsh from './dsh/manager'
-import * as plugins from './plugins'
 import * as versions from './versions'
+import * as dshPlugin from './services/dsh/DshPluginService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
 import { ballClicked, dragBallBy } from './windows/floating'
@@ -63,30 +63,32 @@ export function registerIpc(): void {
   ipcMain.handle('app:stop', () => dsh.stop('panel'))
   ipcMain.handle('app:restart', () => dsh.restart())
 
-  // ---- plugins ----
-  ipcMain.handle('plugins:list', () => plugins.listPlugins())
-  ipcMain.handle('plugins:addLocal', async () => {
-    const opts = {
-      title: '选择插件目录或 .js 文件',
-      properties: ['openDirectory', 'openFile'] as Array<'openDirectory' | 'openFile'>,
-      filters: [{ name: '插件', extensions: ['js', 'cjs', 'mjs'] }],
-    }
-    const owner = getControlPanel()
-    const picked = owner ? await dialog.showOpenDialog(owner, opts) : await dialog.showOpenDialog(opts)
-    if (picked.canceled || !picked.filePaths[0]) return null
-    return plugins.addLocalPlugin(picked.filePaths[0])
+  // ---- plugins (dsh profile-based) ----
+  ipcMain.handle('plugins:list', () => dshPlugin.listPlugins())
+  ipcMain.handle('plugins:add', async (_e, name: string) => {
+    return dshPlugin.addPlugin(name)
   })
-  ipcMain.handle('plugins:addGit', (_e, url: string) => plugins.addGitPlugin(url))
-  ipcMain.handle('plugins:setEnabled', (_e, id: string, enabled: boolean) => {
-    plugins.setPluginEnabled(id, enabled)
-    return plugins.listPlugins()
+  ipcMain.handle('plugins:remove', async (_e, id: string) => {
+    await dshPlugin.removePlugin(id)
+    return dshPlugin.listPlugins()
   })
-  ipcMain.handle('plugins:remove', (_e, id: string) => {
-    plugins.removePlugin(id)
-    return plugins.listPlugins()
+  ipcMain.handle('plugins:enable', (_e, id: string) => {
+    dshPlugin.enablePlugin(id)
+    return dshPlugin.listPlugins()
+  })
+  ipcMain.handle('plugins:disable', (_e, id: string) => {
+    dshPlugin.disablePlugin(id)
+    return dshPlugin.listPlugins()
+  })
+  ipcMain.handle('plugins:uninstall', async (_e, id: string) => {
+    await dshPlugin.uninstallPlugin(id)
+    return dshPlugin.listPlugins()
+  })
+  ipcMain.handle('plugins:export', (_e, id: string) => {
+    return dshPlugin.exportPluginInfo(id)
   })
   ipcMain.handle('plugins:apply', async () => {
-    // Regenerate the overlay from enabled plugins and restart DSH to load them.
+    // Restart DSH to load the updated profile (bundles list changes).
     await dsh.restart()
     return dsh.getStatus()
   })

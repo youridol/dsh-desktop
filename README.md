@@ -4,20 +4,18 @@
 
 DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，简称 DSH）的 Windows x64 桌面封装：以 Electron 窗口内嵌 DSH 原生 Web UI，附带悬浮球控制面板、插件管理、版本管理、系统托盘与开机自启。
 
-项目不改动 DSH 源码，所有扩展经 Cordis patch overlay（`dsh web --patch`）以插件方式挂载，细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+项目不改动 DSH 源码，插件能力经 dsh harness 上游插件机制（`dsh plugin --profile web`，npm/pnpm 包）管理并挂载到 Web profile，桌面端仅做 CLI 调用方与 UI 封装，细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 功能特性
 
-- **冷启动即用**：双击启动后自动拉起捆绑的 DSH 服务（`dsh web --patch … --no-open --port …`，见 `src/main/dsh/manager.ts`），主窗口在服务就绪后自动加载 Web UI；10 秒内未就绪显示错误页与重试按钮（`READY_TIMEOUT_MS`，`src/main/dsh/manager.ts`）。
+- **冷启动即用**：双击启动后自动拉起捆绑的 DSH 服务（`dsh web --no-open --port …`，见 `src/main/dsh/manager.ts`），主窗口在服务就绪后自动加载 Web UI；10 秒内未就绪显示错误页与重试按钮（`READY_TIMEOUT_MS`，`src/main/dsh/manager.ts`）。
 - **悬浮球控制面板**：主窗口右下角悬浮球（可拖动、位置记忆，`src/main/windows/floating.ts`），单击开关独立子窗口控制面板（`src/main/windows/control.ts`，无任务栏项、随主窗口隐藏与恢复）。
-- **插件管理**（`src/main/plugins.ts` + `src/renderer/control/tabs/plugins.ts`）：
-  - 从本地目录 / `.js` 文件安装，或从 Git 仓库浅克隆安装（私有仓库可配置 GitHub 凭据）；
-  - **内置插件预设**（`src/main/builtin-plugins.ts`）：首次启动自动安装并默认启用 `@siliconflow-official/dsh-llm-siliconflow`（幂等，仅缺装/版本不符时下载与装依赖），卸载后不再自动出现（`suppressedPresets`，手工移除 `config.json` 对应项可恢复）；
-  - 自动生成 `cordis.patch.yml`（插件入口为绝对路径），一键"应用并重启 DSH"；
-  - 启用 / 停用 / 卸载，加载日志实时查看。
+- **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile web <add|remove|…>` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 Web profile manifest（`$DSH_HOME/profiles/web/package.json`）：
+  - 输入 npm 包名安装（如 `dshmarket`），不自行 git clone / npm install / 下载 tarball；
+  - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。
 - **日志与状态**（`src/main/logger.ts` + `src/renderer/control/tabs/status.ts`）：DSH 进程状态、端口、PID、实时日志滚动（应用 / DSH / 安装三类来源，镜像到运行目录 `logs/main.log`）。
-- **设置**（`src/renderer/control/tabs/settings.ts`）：DSH 端口（修改后重启生效）、开机自启、启动时检查更新、GitHub 凭据。
+- **设置**（`src/renderer/control/tabs/settings.ts`）：DSH 端口（修改后重启生效）、开机自启、启动时检查更新、GitHub 凭据（用于版本的 Releases 查询限流提升）。
 - **托盘常驻**（`src/main/tray.ts`）：最小化 / 关闭隐藏到托盘；托盘菜单显示主窗口、打开控制面板、彻底退出。
 
 ## 技术栈
@@ -67,10 +65,10 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 
 | 页签 | 功能 | 操作要点 |
 | --- | --- | --- |
-| 插件 | 安装 / 启停 / 卸载 / 应用 | "从本地目录安装…"选择目录或 `.js` 文件；"从 Git 仓库克隆"粘贴仓库 URL（私有仓库先在设置页配置凭据）；"应用并重启 DSH"使启用的插件生效 |
+| 插件 | 安装 / 启停 / 卸载 / 导出 / 应用 | 输入 npm 包名（如 `dshmarket`）安装，经 `dsh plugin --profile web add` 交给 dsh harness；启用 / 禁用 / 卸载 / 导出按钮分别操作 Web profile；"应用并重启 DSH"使改动生效 |
 | 版本 | 检查 / 下载 / 切换 / 回退 / 删除 | 来源可选"最新发布版本"或"最新提交（源码）"；本机版本列表离线可读；不能删除当前使用中的版本 |
 | 日志 | 进程状态 / 实时日志 | 状态卡显示 DSH 状态、端口、PID、运行版本；日志滚动显示应用 / DSH / 安装三类来源 |
-| 设置 | 端口 / 自启 / 更新检查 / 凭据 | 端口修改后需"保存并重启 DSH"；开机自启开关；GitHub 凭据用于 Releases 查询与私有插件克隆，仅保存在运行目录 `credentials.json`，**明文，请勿外泄、勿提交** |
+| 设置 | 端口 / 自启 / 更新检查 / 凭据 | 端口修改后需"保存并重启 DSH"；开机自启开关；GitHub 凭据用于版本的 Releases 查询限流提升，仅保存在运行目录 `credentials.json`，**明文，请勿外泄、勿提交** |
 
 关闭主窗口（或最小化）应用隐藏到托盘而不是退出；托盘菜单提供"显示主窗口 / 打开控制面板 / 退出"。首次启动若捆绑运行时尚未解压，日志区会显示解压进度（约半分钟，见 `src/main/dsh/install.ts` 的 `ensureBundledRuntime`）。
 
@@ -87,7 +85,7 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 
 应用为 Electron main / preload / renderer 三层：主进程负责窗口、托盘、自启、DSH 进程生命周期与版本 / 插件管理；preload 提供按窗口裁剪的窄桥接（`window.dshc` / `window.dshLoader` / `window.dshBall`，见 `src/preload/`）；渲染层为纯原生 HTML/CSS/TS 页面（loader 加载页、floating 悬浮球、control 控制面板）。
 
-DSH 服务由主进程 spawn（`dsh web --patch <overlay> --no-open --port <n>`），端口轮询就绪后主窗口从本地 loader 页导航至 `http://127.0.0.1:<port>`；异常退出自动回到错误态。详见图与模块矩阵：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+DSH 服务由主进程 spawn（`dsh web --no-open --port <n>`），插件经 Web profile（`dsh.profile.bundles`）在启动时自动挂载；端口轮询就绪后主窗口从本地 loader 页导航至 `http://127.0.0.1:<port>`；异常退出自动回到错误态。详见图与模块矩阵：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 部署指南
 
@@ -103,7 +101,7 @@ DSH 服务由主进程 spawn（`dsh web --patch <overlay> --no-open --port <n>`�
 - **首次启动日志区显示解压进度占用约半分钟**：捆绑运行时（约 53MB 的 `dsh-runtime.tgz`）在首次启动时用 Windows 自带的 `System32\tar.exe` 解压到运行目录 `versions\_bundled\`，之后直接复用（`src/main/dsh/install.ts`）。
 - **检查更新提示 GitHub 限流（403）**：匿名 API 限额耗尽。在设置页配置 GitHub 凭据后重试（`src/main/dsh/releases.ts` 的 `authHeaders`）。
 - **便携版更新（切换版本）后"版本缺失"**：运行数据与 exe 同目录，整体移动目录后仍完整；若运行目录被清理，应用自动回退到捆绑版本并提示（`src/main/dsh/manager.ts` 的 `start`）。
-- **插件无法加载**：插件入口须为 `package.json` 的 `main` 或 `index.js` / `index.cjs` / `index.mjs` / `lib/index.js`（`src/main/plugins.ts` 的 `resolveEntry`）；启用后执行"应用并重启 DSH"。
+- **插件无法加载**：确认插件是 npm 包且声明了 `dsh.bundle`（否则 dsh 只当普通依赖安装）；安装后点击"应用并重启 DSH"使其挂载（插件状态以 `$DSH_HOME/profiles/web/package.json` 的 `dsh.profile.bundles` 为准）。
 - **凭据保存在哪里**：仅存于运行目录 `credentials.json`（明文），`.gitignore` 已排除；卸载安装版需手动删除 `%APPDATA%\DSH Desktop\` 中的凭据文件。
 - **需要不同 DSH 版本**：版本页"检查更新 → 下载并切换"；可回退到任意已安装版本或捆绑版本（`src/main/versions.ts` 的 `switchTo`）。
 

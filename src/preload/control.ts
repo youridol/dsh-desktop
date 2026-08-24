@@ -11,10 +11,12 @@ const api = {
   restart: () => ipcRenderer.invoke('app:restart'),
 
   listPlugins: () => ipcRenderer.invoke('plugins:list'),
-  addLocalPlugin: () => ipcRenderer.invoke('plugins:addLocal'),
-  addGitPlugin: (url: string) => ipcRenderer.invoke('plugins:addGit', url),
-  setPluginEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled),
+  addPlugin: (name: string) => ipcRenderer.invoke('plugins:add', name),
   removePlugin: (id: string) => ipcRenderer.invoke('plugins:remove', id),
+  enablePlugin: (id: string) => ipcRenderer.invoke('plugins:enable', id),
+  disablePlugin: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  uninstallPlugin: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
+  exportPlugin: (id: string) => ipcRenderer.invoke('plugins:export', id),
   applyPlugins: () => ipcRenderer.invoke('plugins:apply'),
 
   listVersions: () => ipcRenderer.invoke('versions:list'),

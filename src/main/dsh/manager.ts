@@ -7,13 +7,12 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
-import { getPaths, bundledDshDir } from '../paths'
+import { bundledDshDir } from '../paths'
 import { getConfig, setConfig } from '../config'
 import { appLog, dshLog } from '../logger'
 import { nodeRuntime } from './nodebin'
 import { resolveActiveDir, ensureBundledRuntime } from './install'
-import { installPluginDeps, terminateActiveInstall } from '../plugin-deps'
-import { writePatchOverlay, setPluginDepsError } from '../plugins'
+// plugin-deps removed — dsh profile handles plugin dependencies via pnpm
 
 export type DshState =
   | 'stopped'
@@ -103,34 +102,6 @@ async function pollReady(port: number, seq: number): Promise<boolean> {
   return false
 }
 
-/**
- * Install missing deps for every enabled plugin before the overlay is written.
- * Returns the plugins that can load (deps installed or already satisfied) plus
- * a human-readable warning listing plugins excluded for dep failures.
- */
-async function ensureEnabledPluginsReady(
-  enabled: Array<{ id: string; entry: string; dir: string }>,
-): Promise<{ ready: Array<{ id: string; entry: string }>; warning: string }> {
-  const ready: Array<{ id: string; entry: string }> = []
-  const failed: Array<{ id: string; reason: string }> = []
-  for (const p of enabled) {
-    const res = await installPluginDeps(p.dir)
-    if (res.status === 'failed') {
-      const reason = res.error ?? '依赖安装失败'
-      setPluginDepsError(p.dir, reason)
-      failed.push({ id: p.id, reason })
-    } else {
-      setPluginDepsError(p.dir, undefined)
-      ready.push({ id: p.id, entry: p.entry })
-    }
-  }
-  const warning =
-    failed.length > 0
-      ? `${failed.length} 个插件依赖安装失败：${failed.map((f) => `${f.id}: ${f.reason}`).join('; ')}`
-      : ''
-  return { ready, warning }
-}
-
 export async function start(): Promise<void> {
   if (isAlive()) return
   // First launch: extract the bundled runtime tarball if needed. Fall back to
@@ -158,30 +129,16 @@ export async function start(): Promise<void> {
   }
 
   const cfg = getConfig()
-  const enabled = cfg.plugins.filter((p) => p.enabled && fs.existsSync(p.entry))
 
   manualStop = false
   const seq = ++startSeq
   startedAt = Date.now()
   setState('starting')
 
-  // Fix missing plugin deps before writing the overlay — state is already
-  // 'starting' so a concurrent start() call returns via isAlive() while the
-  // (serialized) installs run. A plugin whose deps fail to install is left out
-  // of this launch (still listed with depsError); DSH keeps starting with
-  // whatever remains loadable.
-  const depsFix = await ensureEnabledPluginsReady(enabled)
-  const patchArgs: string[] = []
-  if (depsFix.ready.length > 0) {
-    writePatchOverlay(depsFix.ready)
-    patchArgs.push('--patch', getPaths().patchFile)
-  }
-
   const node = nodeRuntime()
-  // Launcher flags (--patch) must precede the app's inner flags: the dsh
-  // launcher hands everything after its own options to the booted tree
-  // verbatim, and --no-open/--port belong to the web app, not the launcher.
-  const args = [...node.argsPrefix, bin, 'web', ...patchArgs, '--no-open', '--port', String(cfg.port)]
+  // Plugin loading is handled by the dsh web profile (dsh.profile.bundles).
+  // No more custom --patch overlay; the profile manifest is the source of truth.
+  const args = [...node.argsPrefix, bin, 'web', '--no-open', '--port', String(cfg.port)]
   appLog.info(`Spawning DSH: ${node.label} ${args.join(' ')} (cwd ${dir})`)
   try {
     child = spawn(node.command, args, {
@@ -226,7 +183,7 @@ export async function start(): Promise<void> {
   const ready = await pollReady(cfg.port, seq)
   if (seq !== startSeq) return
   if (ready) {
-    setState('running', depsFix.warning)
+    setState('running')
   } else if (state === 'starting') {
     setState('timeout', `${READY_TIMEOUT_MS / 1000} 秒内服务端口未就绪，请查看日志或更换端口`)
   }
@@ -276,7 +233,6 @@ export async function probeService(port: number): Promise<boolean> {
 
 export function shutdownSync(): void {
   // Best-effort synchronous tree kill on app quit.
-  terminateActiveInstall()
   const pid = child?.pid
   if (pid && process.platform === 'win32') {
     try {
