@@ -61,7 +61,7 @@ test(e2e): add plugin install/uninstall round-trip steps
 
 ## 4. 分支策略
 
-- `main`：**稳定分支**，唯一接受发布的分支；任何时间点保持可构建、可运行（`npm run build` 与 `typecheck` 通过）。发版 tag 规则绑定 main（`v{版本}`，见 `.github/workflows/build-and-release.yml`）。
+- `main`：**稳定分支**，唯一接受发布的分支；任何时间点保持可构建、可运行（`npm run build` 与 `typecheck` 通过）。发版 tag 规则绑定 main：`v{dsh-desktop版本}-{上游DSH标识}`（双版本号规范，`dsh-desktop版本` 取自 `package.json`，上游标识取最新 tag 版本或最新提交 sha7，见 `.github/workflows/build-and-release.yml`）。
 - `dev`：集成分支，收集待合入 `main` 的功能；从 `main` 拉出，保持与 `main` 同步。
 - `feature/*`：功能 / 修复分支，从 `main`（小改）或 `dev`（跨功能）拉出，命名如 `feature/settings-ui`、`fix/port-conflict`。
 

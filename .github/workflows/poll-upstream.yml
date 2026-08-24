@@ -1,8 +1,12 @@
 name: Poll upstream
 
 # 上游巡检（每小时 + 手动双通道）：deepseek-ai/deepseek-harness 是固定更新通道。
-#   上游新 Release（tag 规范化后本仓库无对应 tag）→ 以 main 代码调 build-and-release.yml 发 v{V}；
-#   上游仅默认分支有新 commit → 发 v{V}-dev-<sha7> 候选版（prerelease）；
+# 【双版本号规范】发版版本 = dsh-desktop 版本（package.json，APP_VERSION）+ '-' + 上游标识，严禁混淆：
+#   上游标识按最新程度二选一：发布 tag 版本更新 → tag 规范化版本（如 0.1.1-rc.2）；
+#   提交版本最新（上游默认分支有新 commit）→ sha 前 7 位。
+#   复合 tag：v{APP_VERSION}-{0.1.1-rc.2} / v{APP_VERSION}-{sha7}。
+#   上游新 Release（本仓库无对应复合 tag）→ 以 main 代码调 build-and-release.yml 发正式版；
+#   上游仅默认分支有新 commit → 发 v{APP_VERSION}-{sha7} 候选版（prerelease）；
 #   无变化 → 幂等退出（不触发构建）。
 #
 # GitHub Actions 无法订阅他人仓库事件，故用定时轮询 + “本仓库 tag 存在性”作为幂等真相源：
@@ -23,7 +27,7 @@ on:
         type: string
         default: "auto"
       override_version:
-        description: "手动指定发版版本 V（如 0.1.1-rc.2）；空 = 取上游最新 Release tag 规范化结果"
+        description: "手动指定上游版本标识（如 0.1.1-rc.2）；空 = 取上游最新 Release tag 规范化结果。发版版本由 dsh-desktop 版本 + '-' + 此标识复合"
         type: string
         default: ""
 
@@ -42,6 +46,7 @@ jobs:
       changed: ${{ steps.decide.outputs.changed }}
       mode: ${{ steps.decide.outputs.mode }}
       version: ${{ steps.decide.outputs.version }}
+      app_version: ${{ steps.decide.outputs.app_version }}
       sha: ${{ steps.decide.outputs.sha }}
       upstream_tag: ${{ steps.decide.outputs.upstream_tag }}
       upstream_prerelease: ${{ steps.decide.outputs.upstream_prerelease }}
@@ -85,36 +90,48 @@ jobs:
           SHA=$(gh api "repos/deepseek-ai/deepseek-harness/commits/${DEFAULT_BRANCH}" --jq '.sha')
           SHA7=${SHA:0:7}
 
-          # 幂等真相源：本仓库是否已有目标 tag
-          HAS_TAG=false
-          if git ls-remote --tags origin "refs/tags/v${VERSION}" | grep -q .; then
-            HAS_TAG=true
+          # 【双版本号规范】dsh-desktop 自身版本取自 package.json；本仓库 tag 一律 v{APP_VERSION}-{上游标识}
+          APP_VERSION=$(node -p "require('./package.json').version")
+          echo "desktop app version: $APP_VERSION"
+
+          # 幂等真相源：本仓库是否已有对应复合 tag（tag 版本新 → tag 版本号；提交版本最新 → sha7）
+          TAG_VER="v${APP_VERSION}-${VERSION}"
+          TAG_SHA="v${APP_VERSION}-${SHA7}"
+          HAS_TAG_VER=false
+          if git ls-remote --tags origin "refs/tags/${TAG_VER}" | grep -q .; then
+            HAS_TAG_VER=true
           fi
-          DEV_TAG="v${VERSION}-dev-${SHA7}"
-          HAS_DEV=false
-          if [ "$HAS_TAG" = "true" ] && git ls-remote --tags origin "refs/tags/${DEV_TAG}" | grep -q .; then
-            HAS_DEV=true
+          HAS_TAG_SHA=false
+          if [ "$HAS_TAG_VER" = "true" ] && git ls-remote --tags origin "refs/tags/${TAG_SHA}" | grep -q .; then
+            HAS_TAG_SHA=true
           fi
 
           echo "upstream: tag=$UPSTREAM_TAG version=$VERSION prerelease=$UP_PRE sha=$SHA7 branch=$DEFAULT_BRANCH"
-          echo "local:    v$VERSION tag=$([ "$HAS_TAG" = "true" ] && echo present || echo missing), dev tag=$([ "$HAS_DEV" = "true" ] && echo present || echo missing)"
+          echo "local:    $TAG_VER $([ "$HAS_TAG_VER" = "true" ] && echo present || echo missing), $TAG_SHA $([ "$HAS_TAG_SHA" = "true" ] && echo present || echo missing)"
 
-          # 决策：手动指定模式 > 上游新 Release（无 v{V} tag）> 上游新 commit（无 dev tag）> force > 无变化
+          # 决策：手动指定模式 > 上游新 Release（无 v{APP}-{tag 版本}）> 上游新 commit（无 v{APP}-{sha7}）> force > 无变化
           MODE=""
           if [ "$RELEASE_MODE_INPUT" != "auto" ]; then
             MODE="$RELEASE_MODE_INPUT"
-          elif [ "$HAS_TAG" != "true" ]; then
+          elif [ "$HAS_TAG_VER" != "true" ]; then
             MODE=version
-          elif [ "$HAS_DEV" != "true" ]; then
+          elif [ "$HAS_TAG_SHA" != "true" ]; then
             MODE=dev
           elif [ "$FORCE" = "true" ]; then
             MODE=version
           fi
 
+          # 上游标识：发布 tag 版本更新 → tag 规范化版本；提交版本最新（dev）→ sha 前 7 位
+          UPSTREAM_ID="$VERSION"
+          if [ "$MODE" = "dev" ]; then
+            UPSTREAM_ID="$SHA7"
+          fi
+
           {
             echo "changed=$([ -n "$MODE" ] && echo true || echo false)"
             echo "mode=${MODE:-none}"
-            echo "version=$VERSION"
+            echo "version=$UPSTREAM_ID"
+            echo "app_version=$APP_VERSION"
             echo "sha=$SHA"
             echo "upstream_tag=$UPSTREAM_TAG"
             echo "upstream_prerelease=$UP_PRE"
@@ -151,6 +168,7 @@ jobs:
           CHANGED: ${{ needs.watch.outputs.changed }}
           MODE: ${{ needs.watch.outputs.mode }}
           VERSION: ${{ needs.watch.outputs.version }}
+          APP_VERSION: ${{ needs.watch.outputs.app_version }}
           SHA: ${{ needs.watch.outputs.sha }}
           UPSTREAM_TAG: ${{ needs.watch.outputs.upstream_tag }}
         run: |
@@ -161,10 +179,11 @@ jobs:
             echo "| --- | --- |"
             echo "| 上游 Release tag | \`${UPSTREAM_TAG:-（无）}\` |"
             echo "| 上游默认分支 commit | \`${SHA:0:7}\` |"
-            echo "| 发版版本 V | \`${VERSION:-（无）}\` |"
+            echo "| 上游 DSH 标识 | \`${VERSION:-（无）}\` |"
+            echo "| dsh-desktop 版本 | \`${APP_VERSION:-（无）}\` |"
             if [ "$CHANGED" = "true" ]; then
               echo "| 决策 | 触发构建（模式 \`$MODE\`）|"
-              echo "| 目标 tag | \`$([ "$MODE" = "dev" ] && echo "v${VERSION}-dev-${SHA:0:7}" || echo "v${VERSION}")\` |"
+              echo "| 目标 tag | \`v${APP_VERSION}-${VERSION}\` |"
             else
               echo "| 决策 | ⏭️ 幂等退出（对应 tag 均已存在，无上游变化）|"
             fi

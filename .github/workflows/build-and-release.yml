@@ -2,12 +2,20 @@ name: Build & release
 
 # 复用构建+发版管线，两种触发通道：
 #   - 本仓库任意分支 push          → 构建并按分支规则打 tag 发版（main: v{V}，其它: v{V}-<清洗后分支名>）
-#   - poll-upstream.yml 调用       → 上游新 Release 发 v{V}；仅上游 commit 变化发 v{V}-dev-<sha7> 候选版
+#   - poll-upstream.yml 调用       → 上游新 Release 发 v{V}；仅上游 commit 变化发候选版（同复合格式）
+#
+# 【双版本号规范】严禁混淆两个版本号：
+#   APP_VERSION = dsh-desktop 自身版本（package.json 的 version，唯一桌面壳版本事实源）
+#   UPSTREAM    = 本次捆绑的 DeepSeek Harness 上游版本标识：
+#                 上游最新发布 tag 规范化结果（dsh-vX.Y.Z → X.Y.Z，如 0.1.1-rc.2），
+#                 或上游默认分支最新 commit 的 sha 前 7 位（仅上游无新 Release、仅提交更新时）
+#   V（发版版本）= APP_VERSION-UPSTREAM（如 0.3.0-0.1.1-rc.2 / 0.3.0-a1b2c3d）
+#   选择规则：发布 tag 版本更新 → 用 tag 版本号；提交版本最新 → 用提交 sha 简写。
 #
 # 幂等：目标 tag 已存在且非 force → 跳过发版（tag 存在性即幂等真相源）。
-# 版本 V 来源：workflow_call 由上游 tag 规范化而来（fetch-dsh --version 固定捆绑版本，保证产物与 tag 一致）；
-# push 通道在 fetch-dsh 后读取捆绑的 DSH 版本作为 V。
 # GITHUB_TOKEN 需要 contents: write（打 tag / 建 Release / 传资产）+ actions: write。
+# 版本输入：workflow_call 的 version = 上游标识（version 模式为 tag 规范化版本；dev 模式为 sha7）；
+# push 通道在 fetch-dsh 后读取捆绑 DSH 版本作为 UPSTREAM。
 
 on:
   push:
@@ -17,7 +25,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: "发版版本 V（上游 tag 规范化结果，如 0.1.1-rc.2；空 = 取捆绑 DSH 版本）"
+        description: "上游版本标识（version 模式：上游 tag 规范化结果如 0.1.1-rc.2；dev 模式：sha 前 7 位）。发版版本由 APP_VERSION-标识 复合而成"
         type: string
         default: ""
       release_mode:
@@ -51,7 +59,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "发版版本 V（空 = 取捆绑 DSH 版本）"
+        description: "上游版本标识（version 模式：上游 tag 规范化结果如 0.1.1-rc.2；dev 模式：sha 前 7 位；空 = 取捆绑 DSH 版本）"
         type: string
         default: ""
       release_mode:
@@ -162,17 +170,34 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 双版本号规范：APP_VERSION 是 dsh-desktop 自身版本（package.json），UPSTREAM 是捆绑的 DSH 上游标识，二者严禁混淆
+          APP_VERSION=$(node -p "require('./package.json').version")
+          echo "desktop app version: $APP_VERSION"
+
           # 捆绑版本 = 产物里的 DSH 运行时版本（fetch-dsh 后必存在）
           BUNDLED=$(node -p "require('./.dsh-runtime/node_modules/@deepseek-ai/dsh/package.json').version")
           echo "bundled dsh version: $BUNDLED"
 
-          # poll-upstream 显式指定版本时必须与捆绑版本一致（fetch-dsh --version 已固定）
-          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$BUNDLED" ]; then
-            echo "error: requested version '$INPUT_VERSION' != bundled '$BUNDLED'" >&2
-            exit 1
+          # 上游标识：dev 模式（上游无新 Release、仅 commit 更新）用 sha 前 7 位；否则用 tag 规范化版本
+          MODE="$INPUT_RELEASE_MODE"
+          if [ "$MODE" = "auto" ]; then
+            MODE=version
           fi
-          VERSION="${INPUT_VERSION:-$BUNDLED}"
-          echo "release version: $VERSION"
+          if [ "$MODE" = "dev" ]; then
+            UPSTREAM="${INPUT_UPSTREAM_SHA:0:7}"
+            [ -n "$UPSTREAM" ] || { echo "error: dev mode requires upstream sha" >&2; exit 1; }
+            [[ "$UPSTREAM" =~ ^[0-9a-f]{7}$ ]] || { echo "error: dev upstream identifier must be 7 hex chars" >&2; exit 1; }
+          else
+            # poll 显式指定 tag 版本时必须与捆绑版本一致（fetch-dsh --version 已固定）
+            UPSTREAM="${INPUT_VERSION:-$BUNDLED}"
+            if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$BUNDLED" ]; then
+              echo "error: requested upstream '$INPUT_VERSION' != bundled '$BUNDLED'" >&2
+              exit 1
+            fi
+          fi
+          # 发版版本 = desktop 版本 + '-' + 上游标识（如 0.3.0-0.1.1-rc.2 / 0.3.0-a1b2c3d）
+          VERSION="${APP_VERSION}-${UPSTREAM}"
+          echo "release version: $VERSION (desktop $APP_VERSION + upstream $UPSTREAM)"
 
           # 分支：workflow_call 通道以 ref_to_build（main）为准，push/手动通道用触发分支
           BRANCH="${INPUT_REF_TO_BUILD:-$GITHUB_REF_NAME}"
@@ -189,15 +214,8 @@ jobs:
           BRANCH_LABEL=$(sanitize "$BRANCH")
           [ -z "$BRANCH_LABEL" ] && BRANCH_LABEL=main
 
-          MODE="$INPUT_RELEASE_MODE"
-          if [ "$MODE" = "auto" ]; then
-            MODE=version
-          fi
-
-          # 目标 tag：main → v{V}；其它分支 → v{V}-<分支后缀>；dev → v{V}-dev-<sha7>
-          if [ "$MODE" = "dev" ] && [ -n "$INPUT_UPSTREAM_SHA" ]; then
-            TAG="v${VERSION}-dev-${INPUT_UPSTREAM_SHA:0:7}"
-          elif [ "$BRANCH" != "main" ]; then
+          # 目标 tag：main → v{V}；其它分支 → v{V}-<分支后缀>；dev 候选版同样使用复合版本格式（prerelease 由 PREFLAG 标记）
+          if [ "$BRANCH" != "main" ]; then
             TAG="v${VERSION}-${BRANCH_LABEL}"
           else
             TAG="v${VERSION}"
@@ -211,12 +229,12 @@ jobs:
             echo "tag $TAG already exists — idempotent skip"
           fi
 
-          # prerelease 标志：dev 恒为候选；否则用上游显式标记；空则按版本后缀启发式（rc/alpha/beta/pre）
+          # prerelease 标志：dev 恒为候选；否则用上游显式标记；空则按上游标识后缀启发式（rc/alpha/beta/pre）
           if [ "$MODE" = "dev" ]; then
             PREFLAG=true
           elif [ -n "$INPUT_UPSTREAM_PRERELEASE" ]; then
             PREFLAG="$INPUT_UPSTREAM_PRERELEASE"
-          elif [[ "$VERSION" =~ -?(rc|alpha|beta|pre)[.-]?[0-9]*$ ]]; then
+          elif [[ "$UPSTREAM" =~ -?(rc|alpha|beta|pre)[.-]?[0-9]*$ ]]; then
             PREFLAG=true
           else
             PREFLAG=false
@@ -225,6 +243,8 @@ jobs:
 
           {
             echo "bundled=$BUNDLED"
+            echo "app_version=$APP_VERSION"
+            echo "upstream=$UPSTREAM"
             echo "version=$VERSION"
             echo "tag=$TAG"
             echo "branch=$BRANCH"
@@ -244,6 +264,8 @@ jobs:
           MODE: ${{ steps.decide.outputs.mode }}
           PREFLAG: ${{ steps.decide.outputs.preflag }}
           BUNDLED: ${{ steps.decide.outputs.bundled }}
+          APP_VERSION: ${{ steps.decide.outputs.app_version }}
+          UPSTREAM: ${{ steps.decide.outputs.upstream }}
           FORCE: ${{ inputs.force }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
           UPSTREAM_SHA: ${{ inputs.upstream_sha }}
@@ -262,8 +284,10 @@ jobs:
             echo "DSH Desktop **v$VERSION**"
             echo
             echo "- 分支：\`$BRANCH\`"
+            echo "- dsh-desktop 版本：\`$APP_VERSION\`"
+            echo "- 上游 DeepSeek Harness 标识：\`$UPSTREAM\`"
             if [ "$MODE" = "dev" ]; then
-              echo "- 类型：候选版（dev）— 上游默认分支已有新提交，正式版 tag 已存在"
+              echo "- 类型：候选版（dev）— 上游无新 Release、默认分支已有新提交（正式版 tag 已存在）"
             else
               echo "- 类型：正式版"
             fi
@@ -330,6 +354,8 @@ jobs:
           FORCE: ${{ inputs.force }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
           UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          APP_VERSION: ${{ steps.decide.outputs.app_version }}
+          UPSTREAM: ${{ steps.decide.outputs.upstream }}
         run: |
           {
             if [ -z "$VERSION" ]; then
@@ -349,6 +375,8 @@ jobs:
               echo "| --- | --- |"
               echo "| 版本 | \`$VERSION\` |"
               echo "| Release tag | \`$TAG\` |"
+              echo "| dsh-desktop 版本 | \`$APP_VERSION\` |"
+              echo "| 上游 DSH 标识 | \`$UPSTREAM\` |"
               echo "| 分支 | \`$BRANCH\` |"
               echo "| 模式 | \`$MODE\` |"
               if [ "$PUBLISHED" = "true" ]; then
@@ -359,6 +387,10 @@ jobs:
               fi
               if [ -n "$UPSTREAM_SHA" ]; then
                 echo "| 上游 commit | \`${UPSTREAM_SHA:0:7}\` |"
+              fi
+              if [ -n "$APP_VERSION" ] && [ -n "$UPSTREAM" ]; then
+                echo "| dsh-desktop 版本 | \`$APP_VERSION\` |"
+                echo "| 上游 DSH 标识 | \`$UPSTREAM\` |"
               fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"

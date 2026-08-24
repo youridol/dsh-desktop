@@ -81,9 +81,11 @@ npm run dist:zip        # electron-builder --win zip  --x64 -> release/zip/
 | `poll-upstream.yml` | 每小时 37 分定时 + `workflow_dispatch`（`force` / `release_mode` / `override_version`） | 巡检上游最新 Release tag 与默认分支最新 commit；本仓库无对应 `v{版本}` tag → 以 main 代码调 `build-and-release.yml` 发正式版；仅上游 commit 变化 → 发 `v{版本}-dev-{sha7}` 候选版（prerelease）；无变化幂等退出 |
 | `build-and-release.yml` | 任意分支 push + `workflow_call` 复用 + 手动 | windows-latest / Node 22：checkout → `npm ci` → `tsc --noEmit` → `make-icons` → `fetch-dsh`（poll 通道按指定版本固定捆绑）→ `build` → `pack-runtime` → NSIS + zip（注入 `GH_TOKEN`）→ `sha256sum` checksums → 打 tag 并 `gh release` 发布（标题 `DSH Desktop v{版本}`，资产 exe/zip/checksums） |
 
-发版规则（`.github/workflows/build-and-release.yml`）：
-- tag：main 分支 → `v{版本}`；其它分支 → `v{版本}-{清洗后分支名}`；dev 候选 → `v{版本}-dev-{sha7}`；
-- 版本映射：上游 tag `dsh-v0.1.1-rc.2` → 桌面端 `0.1.1-rc.2`；
+发版规则（双版本号规范，`.github/workflows/`，严禁混淆两个版本号）：
+- **dsh-desktop 版本**（APP_VERSION）：取自 `package.json` 的 `version`，唯一桌面壳版本事实源；
+- **上游 DSH 标识**（UPSTREAM）：本次捆绑的 DeepSeek Harness 版本标识，按最新程度二选一——发布 tag 版本更新时用 tag 规范化版本（上游 tag `dsh-v0.1.1-rc.2` → `0.1.1-rc.2`）；上游默认分支仅提交更新时用提交 sha 前 7 位；
+- **发版版本**（V）= `APP_VERSION-UPSTREAM`（如 `0.3.0-0.1.1-rc.2` / `0.3.0-a1b2c3d`）；
+- **tag 规则**：main 分支 → `v{V}`；其它分支 → `v{V}-{清洗后分支名}`；dev 候选版同复合格式（prerelease 由 release 标志标记）；
 - 幂等：目标 tag 已存在即跳过发版（tag 存在性为真相源），`force=true` 才覆盖资产；
 - 防循环：tag push 不匹配 `branches` 过滤，不会回流触发。
 
