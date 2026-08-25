@@ -21,3 +21,6 @@ runtime/
 Thumbs.db
 .DESKTOP-INI
 desktop.ini
+
+# Local agent instructions — never committed
+/AGENTS.md
