@@ -208,6 +208,7 @@ label.radio input { accent-color: var(--accent); }
 
 /* ---- progress ---- */
 .progress-wrap { margin: 8px 0; }
+.progress-wrap.hidden { display: none; }
 .progress-bar {
   height: 8px;
   background: #10151b;
@@ -220,6 +221,9 @@ label.radio input { accent-color: var(--accent); }
   width: 30%;
   background: var(--accent);
   border-radius: 5px;
+  animation: none;
+}
+.progress-wrap.loading .fill {
   animation: slide 1.2s ease-in-out infinite;
 }
 @keyframes slide {
