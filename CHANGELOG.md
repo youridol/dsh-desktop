@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.6.0] - 2026-08-25
+
+### 新增（控制面板仪表盘 Dashboard）
+
+控制面板新增「仪表盘」页签（默认首个页签），统一监控 DSH 服务、插件、版本与异常汇总：
+
+- **新增统一 Widget 合约与注册表**（`src/renderer/control/tabs/dashboard/widget.ts`）：`DashboardWidget`（id / title / refreshIntervalMs / render / refresh / dispose）+ `registerDashboardWidget()`。控制面板壳（`app.ts`）不感知具体监控内容，新增监控模块只需在 `tabs/dashboard/widgets/` 新建文件注册并在 `tabs/dashboard.ts` 顶部 import，无需修改核心架构、preload 或 IPC。
+- **新增仪表盘壳**（`src/renderer/control/tabs/dashboard.ts`）：挂载已注册 Widget 卡片、注入 `bridge()/toast` 上下文，按各 Widget 的 `refreshIntervalMs` 统一周期刷新，并提供单卡片手动刷新。
+- **内置四个 Widget**（`tabs/dashboard/widgets/`）：DSH 服务（状态 / 端口 / PID / 版本 / 运行时长 + 启停重启，复用 `app:getState` 与 `dsh:status` 事件）；插件概览（已安装 / 已启用 / 异常计数与最近启用插件，复用 `plugins:list`）；版本概览（当前 DSH / 桌面壳 / 本机已装版本，复用 `app:getState`）；异常与错误（错误 / 警告计数与最近异常，复用 `logs:subscribe` / `logs:line` / `logs:cleared`，含清空与查看日志入口）。
+- **控制面板壳**（`app.ts` / `index.html` / `style.css`）：五页签（仪表盘 / 插件 / 版本 / 日志与状态 / 设置），仪表盘为默认激活页；新增仪表盘样式（`.dash-grid` 卡片网格、`.dash-count` 指标数等），不影响既有页签。
+- **测试**（`test/dashboard-widget.test.mjs`）：Widget 注册表顺序 / 重复 id 拒绝 / 快照语义 / 可选 refresh 保留，共 4 用例。
+
+
 ## [v0.5.1] - 2026-08-25
 
 ### 修复

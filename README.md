@@ -10,6 +10,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 
 - **冷启动即用**：双击启动后自动拉起捆绑的 DSH 服务（`dsh web --no-open --port …`，见 `src/main/dsh/manager.ts`），主窗口在服务就绪后自动加载 Web UI；10 秒内未就绪显示错误页与重试按钮（`READY_TIMEOUT_MS`，`src/main/dsh/manager.ts`）。
 - **悬浮球控制面板**：主窗口右下角悬浮球（可拖动、位置记忆，`src/main/windows/floating.ts`），单击开关独立子窗口控制面板（`src/main/windows/control.ts`，无任务栏项、随主窗口隐藏与恢复）。
+- **仪表盘（Dashboard）**（`src/renderer/control/tabs/dashboard.ts` + `tabs/dashboard/widgets/`）：控制面板默认页签，统一监控 DSH 服务运行状态、插件概要、版本概要与最近异常；监控模块经统一 Widget 注册表挂载，新增监控模块无需改核心架构。
 - **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh Harness）与 Profile 作为元数据写入 manifest 并展示在列表中：
   - 安装方式可选 npm / npx / dsh Harness：npm 与 npx 默认安装到 `web` profile，dsh Harness 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），不自行 git clone / npm install / 下载 tarball；
   - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
@@ -88,10 +89,11 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 
 ## 使用说明
 
-主窗口内嵌 DSH Web UI；主窗口右下角悬浮球单击弹出控制面板，含四个页签：
+主窗口内嵌 DSH Web UI；主窗口右下角悬浮球单击弹出控制面板，含五个页签：
 
 | 页签 | 功能 | 操作要点 |
 | --- | --- | --- |
+| 仪表盘 | 统一监控：DSH 服务 / 插件概要 / 版本概要 / 异常汇总 | 各监控卡片独立刷新（DSH 服务卡含启停操作）；卡片内的「管理插件 / 版本管理 / 查看日志」可直接跳转对应页签；异常卡支持清空日志 |
 | 插件 | 安装 / 启停 / 卸载 / 导出 / 应用 | 选择安装方式（npm / npx / dsh Harness）并输入插件名（如 `dshmarket`）安装，dsh Harness 可指定 Profile（如 `web`）；列表用标签展示「来源」与「Profile」；启用 / 禁用 / 卸载按记录来源与 Profile 路由；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」） |
 | 版本 | 检查 / 下载 / 切换 / 回退 / 删除 | 来源可选"最新发布版本"或"最新提交（源码）"；本机版本列表离线可读；不能删除当前使用中的版本 |
 | 日志 | 进程状态 / 实时日志 | 状态卡显示 DSH 状态、端口、PID、运行版本；日志滚动显示应用 / DSH / 安装三类来源 |
@@ -106,6 +108,7 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 - **调试**：`npm run dev` 以开发模式启动（`package.json`），主进程日志输出到运行目录 `logs/main.log` 并实时回传控制面板；
 - **自动化验证**：以 `--remote-debugging-port=9222` 启动应用后，用 `node scripts/e2e-driver.mjs <step> [args]` 经 CDP 调用控制面板的 `window.dshc` 桥接做端到端断言（`scripts/e2e-driver.mjs`，可执行 step：`state` / `check` / `plugins` / `versions` / `download` / `switchTo` / `setPort` / `restart` 等），示例插件 fixture 在 `.e2e/test-plugin/`；
 - **类型检查**：`npm run typecheck`（`tsc --noEmit`，strict）。
+- **扩展仪表盘**：新增监控模块只需在 `src/renderer/control/tabs/dashboard/widgets/` 新建文件实现 `DashboardWidget` 并 `registerDashboardWidget` 注册，再在 `tabs/dashboard.ts` 顶部 import；无需改 app.ts / preload / IPC（注册表见 `tabs/dashboard/widget.ts`）。
 - **代码规范**：无 ESLint / Prettier 配置，类型层约束由 `tsconfig.json` 的 `strict` + `noUnusedLocals` + `noUnusedParameters` + `noFallthroughCasesInSwitch` + `forceConsistentCasingInFileNames` 提供；新增模块需同步更新 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。
 
 ## 架构概览

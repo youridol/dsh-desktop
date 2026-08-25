@@ -27,7 +27,7 @@ flowchart TB
     subgraph renderer（src/renderer/，原生 HTML/CSS/TS）
         RLOADER["loader/ 加载页（加载态 / 错误 + 重试）"]
         RBALL["floating/ 悬浮球（拖动 / 单击）"]
-        RCTRL["control/ 控制面板<br/>tabs: plugins · versions · status · settings"]
+        RCTRL["control/ 控制面板<br/>tabs: dashboard · plugins · versions · status · settings"]
     end
 
     subgraph 外部
@@ -87,6 +87,7 @@ flowchart TB
 | 开机自启 | `app.setLoginItemSettings` 同步开关（便携版指向 exe 真实路径） | `src/main/autostart.ts` |
 | preload 桥 | 按窗口暴露窄桥接：`dshLoader`（文件协议守卫）/ `dshBall` / `dshc` | `src/preload/loader.ts`、`floating.ts`、`control.ts` |
 | 控制面板页面 | 四页签 UI（插件 / 版本 / 日志状态 / 设置），独立初始化 | `src/renderer/control/app.ts` + `tabs/*.ts` |
+| 仪表盘 Widget 注册表 | 统一监控模块接口：`DashboardWidget`（id / title / refreshIntervalMs / render / refresh / dispose）+ `registerDashboardWidget`；壳不感知具体监控，新模块仅新增 `tabs/dashboard/widgets/*.ts` 并注册 | `src/renderer/control/tabs/dashboard/widget.ts` + `tabs/dashboard.ts` |
 | 悬浮球页面 | 指针捕获：< 5px 位移视为单击，否则按增量拖动 | `src/renderer/floating/app.ts` |
 | loader 页面 | 准备中旋转、错误 + 重试按钮 | `src/renderer/loader/app.ts` |
 | 构建脚本 | esbuild 编译 main/preload/renderer → `dist/`；复制 html/css/assets | `scripts/build.mjs` |
@@ -210,7 +211,7 @@ dsh-desktop/
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）
-│   └── renderer/               # 无框架页面：loader / floating / control（tabs/）
+│   └── renderer/               # 无框架页面：loader / floating / control（tabs/ 含 dashboard/ Widget 注册表与 widgets/）
 ├── package.json                # 版本、scripts、devDependencies（应用本体零运行时依赖）
 ├── package-lock.json           # 依赖锁（lockfileVersion 3）
 ├── electron-builder.yml        # 打包配置（NSIS + zip、extraResources、afterPack）

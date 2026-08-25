@@ -250,3 +250,22 @@ label.radio input { accent-color: var(--accent); }
 .toast.hidden { display: none; }
 
 a { color: #9fb4ff; }
+
+/* ---- dashboard ---- */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+.dash-widget { margin-bottom: 0; display: flex; flex-direction: column; min-width: 0; }
+.dash-widget-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.dash-widget-head h3 { margin: 0; }
+.dash-widget-body { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 70px; }
+.dash-count { font-size: 22px; font-weight: 700; line-height: 1; }
+.dash-count.ok { color: var(--ok); }
+.dash-count.warn { color: var(--warn); }
+.dash-count.err { color: var(--danger); }
+.dash-mini-list { display: flex; flex-direction: column; gap: 4px; }
+.dash-mini-list .row { flex-wrap: nowrap; }
+.dash-mini-list .txt { font-size: 12px; }

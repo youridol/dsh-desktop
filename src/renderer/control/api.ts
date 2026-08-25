@@ -92,7 +92,7 @@ export interface LogLine {
   text: string
 }
 
-interface Bridge {
+export interface Bridge {
   getState: () => Promise<AppState>
   start: () => Promise<void>
   stop: () => Promise<void>

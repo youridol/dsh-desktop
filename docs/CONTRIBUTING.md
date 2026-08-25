@@ -36,6 +36,7 @@ npm run build         # esbuild 编译，验证打包链
 - 新增 IPC 通道时同步更新对应 preload 桥（`src/preload/`）与 renderer 类型声明（`src/renderer/control/api.ts`）；
 - 配置项新增时同步维护 `src/main/config.ts` 的 `DEFAULT_CONFIG` 与字段校验归一化逻辑；
 - 路径 / 运行目录逻辑统一走 `src/main/paths.ts`，勿在业务代码中硬编码。
+- 新增仪表盘监控模块：在 `src/renderer/control/tabs/dashboard/widgets/` 新建文件实现 `DashboardWidget` 并用 `registerDashboardWidget` 注册，再在 `tabs/dashboard.ts` 顶部 import 生效；不要修改仪表盘壳 / app.ts / preload / IPC。
 
 ## 3. 提交格式（Conventional Commits）
 
@@ -85,6 +86,7 @@ test(e2e): add plugin install/uninstall round-trip steps
 
 - 新增功能必须附带可执行的验证；缺陷修复必须附复现 / 回归说明；
 - 类型检查：`npm run typecheck` 必须零错误（CI 强制，见 `.github/workflows/build-and-release.yml`）；
+- 仪表盘相关改动需运行 `node --test test/dashboard-widget.test.mjs`（Widget 注册表回归）；
 - 打包链验证：`npm run build` +（涉及运行时变更时）`npm run fetch-dsh && npm run dist` 本地通过；
 - 端到端：以 `--remote-debugging-port=9222` 启动应用，用 `node scripts/e2e-driver.mjs <step> [args]` 走通 `window.dshc` 桥接断言（`scripts/e2e-driver.mjs`；可用 step 见 `exprs` 表）；涉及插件功能时使用 `.e2e/test-plugin/` fixture；
 - CI 全绿后方可合并；`build-and-release.yml` 在 push 后会自动构建，以该运行结果为准。

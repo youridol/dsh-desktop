@@ -1,4 +1,5 @@
-/** Control panel shell: tabs, toast, wiring of the four modules. */
+/** Control panel shell: tabs, toast, wiring of the five modules. */
+import { initDashboard } from './tabs/dashboard'
 import { initPlugins } from './tabs/plugins'
 import { initVersions } from './tabs/versions'
 import { initStatus } from './tabs/status'
@@ -20,6 +21,7 @@ document.getElementById('closeBtn')!.addEventListener('click', () => {
 })
 
 const panes: Record<string, HTMLElement> = {
+  dashboard: document.getElementById('pane-dashboard')!,
   plugins: document.getElementById('pane-plugins')!,
   versions: document.getElementById('pane-versions')!,
   status: document.getElementById('pane-status')!,
@@ -28,6 +30,7 @@ const panes: Record<string, HTMLElement> = {
 
 const initialized = new Set<string>()
 const initializers: Record<string, () => void> = {
+  dashboard: () => initDashboard(panes.dashboard, toast),
   plugins: () => initPlugins(panes.plugins, toast),
   versions: () => initVersions(panes.versions, toast),
   status: () => initStatus(panes.status),
@@ -51,4 +54,4 @@ document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => activate((btn as HTMLElement).dataset.tab!))
 })
 
-activate('plugins')
+activate('dashboard')
