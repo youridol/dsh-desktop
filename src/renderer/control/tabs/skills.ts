@@ -92,6 +92,7 @@ function renderShell(): void {
   const kv = h('div', { class: 'kv' })
   kv.append(
     h('div', { class: 'k' }, text('仓库目录')), h('div', { class: 'mono' }, text(state?.reposDir ?? '…')),
+    h('div', { class: 'k' }, text('Agents Home')), h('div', { class: 'mono' }, text(state?.agentsHome ?? '…')),
     h('div', { class: 'k' }, text('全局 Skills')), h('div', { class: 'mono' }, text(state?.globalDir ?? '…')),
     h('div', { class: 'k' }, text('项目 Skills')), h('div', { class: 'mono' }, text(state?.projectDir ?? '…')),
     h('div', { class: 'k' }, text('备份目录')), h('div', { class: 'mono' }, text(state?.backupsDir ?? '…')),
@@ -501,7 +502,7 @@ function renderInstalledItem(s: InstalledSkill): HTMLElement {
     h('label', { class: 'switch' }, enabledSwitch, h('span', { class: 'track' })),
     h('div', { class: 'meta grow' },
       h('div', { class: 'name' }, text(s.name), ...badgesArr),
-      h('div', { class: 'sub mono' }, text(`${s.repoUrl} · ${s.path} · commit ${shortCommit(s.commit)} · 更新于 ${fmtTs(s.updatedAt)}`)),
+      h('div', { class: 'sub mono' }, text(s.repoId === 'agents' ? `本地全局 Skills（${state?.globalDir ?? ''}） · ${s.path}` : `${s.repoUrl} · ${s.path} · commit ${shortCommit(s.commit)} · 更新于 ${fmtTs(s.updatedAt)}`)),
     ),
     h('button', { class: 'btn small', onclick: () => toggleSkillDetail(s.key) }, text('详情')),
     h('button', { class: 'btn small', disabled: !updatesByKey.has(s.key), onclick: () => void updateSkill(s.key) }, text('更新')),
@@ -601,7 +602,7 @@ async function checkUpdates(): Promise<void> {
 }
 
 async function updateAllAvailable(): Promise<void> {
-  const keys = filteredInstalled().map((s) => s.key)
+  const keys = filteredInstalled().filter((s) => s.repoId !== 'agents').map((s) => s.key)
   if (keys.length === 0) {
     toastFn('没有已安装技能', true)
     return

@@ -134,6 +134,7 @@ export interface SkillsState {
   globalDir: string
   projectDir: string
   backupsDir: string
+  agentsHome: string
   defaultRepository: string
   repositoryCount: number
   installedCount: number

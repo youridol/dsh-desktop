@@ -1,11 +1,11 @@
 /**
  * Skills 安装生命周期与作用域隔离（global / project）。
  *
- * 每个作用域拥有独立的安装目录与 `index.json` 清单：
- *   global  -> <runtime>/skills/global
- *   project -> <runtime>/skills/project（可用 config.skills.projectDir 覆盖）
+ * 每个作用域拥有安装目录（global = <agentsHome>/skills，deepseek-harness user-agents 全局根；
+ * project = <runtime>/skills/project，可用 config.skills.projectDir 覆盖）与独立 `index.json` 清单。
  * 安装 = 把仓库中发现的技能目录复制到作用域目录并登记清单；
- * 启用/停用只改清单，不删除文件；卸载/删除移除文件与登记。
+ * 启用/停用改清单；global 作用域额外写 deepseek-harness 前导调用策略（disable-model-invocation /
+ * user-invocable），使启停对上游 harness 真实生效；卸载/删除移除文件与登记。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -15,26 +15,30 @@ import {
   skillLeafName,
   sanitizeSkillPath,
   isValidSkillScope,
+  AGENTS_SOURCE_ID,
+  agentSkillKey,
+  isAgentSkillName,
+  kebabSlug,
   type SkillScope,
 } from './validation'
-import type { DiscoveredSkill } from './discovery'
+import { discoverAgentSkills, ensureAgentSkillFrontmatter, patchSkillFrontmatter, type DiscoveredSkill } from './discovery'
 import type { SkillsRepositoryRecord } from './repositoryManager'
 
 export interface InstalledSkill {
-  /** 全局唯一键：repoId:path。 */
+  /** 全局唯一键：repoId:path（仓库来源）或 agents:<name>（本机 agent 技能）。 */
   key: string
-  /** 安装目录叶名（repoId + path 派生）。 */
+  /** 安装目录叶名（global 为 kebab 技能名，project 为 repoId + path 派生）。 */
   id: string
   name: string
   description: string | null
-  /** 来源仓库 id。 */
+  /** 来源仓库 id；本机 agent 技能为 AGENTS_SOURCE_ID（agents）。 */
   repoId: string
-  /** 来源仓库 URL。 */
+  /** 来源仓库 URL；本机 agent 技能为空串。 */
   repoUrl: string
-  /** 技能在仓库内的相对路径。 */
+  /** 技能在仓库内的相对路径（本机 agent 技能为根目录相对路径，如 <name> 或 <name>.md）。 */
   path: string
   scope: SkillScope
-  /** 安装时来源 commit（同步后刷新为最新）。 */
+  /** 安装时来源 commit（同步后刷新为最新；本机 agent 技能为 null）。 */
   commit: string | null
   installedAt: number
   updatedAt: number
@@ -55,6 +59,11 @@ export interface SkillLifecycleOptions {
   projectDir: string
   reposDir: string
   now?: () => number
+}
+
+/** 根据 frontmatter 调用策略推导 agent 技能默认启用状态（与 deepseek-harness 一致）。 */
+function policyEnabled(metadata: DiscoveredSkill['metadata']): boolean {
+  return !(metadata.disableModelInvocation === true) && metadata.userInvocable !== false
 }
 
 export class SkillsLifecycle {
@@ -101,22 +110,80 @@ export class SkillsLifecycle {
     fs.renameSync(tmp, this.manifestPath(scope))
   }
 
+  /**
+   * 列出已安装技能。global 作用域 = 清单 + 磁盘发现合并（deepseek-harness 已有技能可见）。
+   */
   listInstalled(scope?: SkillScope): InstalledSkill[] {
     const scopes = scope ? [scope] : (['global', 'project'] as const)
     const out: InstalledSkill[] = []
     for (const s of scopes) {
-      out.push(...this.readScope(s).skills.map((x) => ({ ...x, scope: s })))
+      out.push(...(s === 'global' ? this.listGlobal() : this.readScope(s).skills.map((x) => ({ ...x, scope: s }))))
     }
     return out
   }
 
   getSkill(scope: SkillScope, key: string): InstalledSkill | null {
+    if (scope === 'global') {
+      return this.listGlobal().find((s) => s.key === key) ?? null
+    }
     const found = this.readScope(scope).skills.find((s) => s.key === key)
     return found ? { ...found, scope } : null
   }
 
   private repoDirOf(repoId: string): string {
     return path.join(this.reposDir, repoId)
+  }
+
+  private dirIdFor(scope: SkillScope, repoId: string, safePath: string, name: string): string {
+    if (scope === 'global') {
+      const leaf = safePath.split('/').filter(Boolean).pop() ?? ''
+      const candidate = isAgentSkillName(name) ? name : leaf || name
+      return kebabSlug(candidate)
+    }
+    return skillLeafName(repoId, safePath)
+  }
+
+  /** 复用备份中的单段安全 id（历史备份/新备份均按原目录恢复）。 */
+  private safeId(input: string | undefined): string | null {
+    if (!input) return null
+    const clean = sanitizeSkillPath(input)
+    if (!clean || clean.includes('/') || clean === '.' || clean === '..') return null
+    return clean
+  }
+
+  /**
+   * global 清单与磁盘合并：已登记且目录仍在的条目保留；目录仍存在但未登记的条目按 agent 技能补入。
+   * 目录/文件同名时清单条目代表该目录，避免同一技能被计两次。
+   */
+  private listGlobal(): InstalledSkill[] {
+    const manifest = this.readScope('global').skills.map((x) => ({ ...x, scope: 'global' as SkillScope }))
+    const disk = discoverAgentSkills(this.globalDir)
+    const diskById = new Map(disk.map((d) => [d.path, d]))
+    const out: InstalledSkill[] = []
+    for (const m of manifest) {
+      if (!fs.existsSync(this.installedDir('global', m.id))) continue
+      out.push(m)
+      diskById.delete(m.id)
+    }
+    for (const d of diskById.values()) {
+      const id = d.path
+      out.push({
+        key: agentSkillKey(id),
+        id,
+        name: d.name,
+        description: d.description,
+        repoId: AGENTS_SOURCE_ID,
+        repoUrl: '',
+        path: id,
+        scope: 'global',
+        commit: null,
+        installedAt: 0,
+        updatedAt: 0,
+        enabled: policyEnabled(d.metadata),
+        files: d.files,
+      })
+    }
+    return out
   }
 
   getSkillFiles(sourceRepoDir: string, skill: DiscoveredSkill): Array<{ rel: string; abs: string }> {
@@ -148,6 +215,7 @@ export class SkillsLifecycle {
 
   /**
    * 安装 / 更新技能：把仓库内技能副本复制到作用域目录，并写清单。
+   * global 作用域使用 kebab 目录名并对 SKILL.md 前导做 harness 规范化。
    * overwrite=true 时允许覆盖同名目录；已存在同 key 时原地更新并保留 enabled/installedAt。
    */
   installSkill(
@@ -162,22 +230,23 @@ export class SkillsLifecycle {
       throw new Error('技能路径不合法')
     }
     const key = skillKey(repo.id, safePath)
-    const id = skillLeafName(repo.id, safePath)
+    const id = this.dirIdFor(scope, repo.id, safePath, skill.name)
     const manifest = this.readScope(scope)
     const existing = manifest.skills.find((s) => s.key === key)
     const dirConflict = manifest.skills.find((s) => s.id === id && s.key !== key)
-    if (dirConflict && !options.overwrite) {
-      throw new Error(
-        `目录冲突：技能 ${dirConflict.name}（${dirConflict.repoId}:${dirConflict.path}）已占用目录 ${id}，勾选“覆盖”后可替换`,
-      )
+    const destDir = this.installedDir(scope, id)
+    // global 目录可能已被 deepseek-harness 或其他工具占用：非覆盖安装时拒绝
+    const diskOccupied = scope === 'global' && fs.existsSync(destDir) && !existing
+    if (!options.overwrite && (dirConflict || diskOccupied)) {
+      const owner = dirConflict ? `${dirConflict.repoId}:${dirConflict.path}` : `磁盘目录 ${id}`
+      throw new Error(`目录冲突：${owner} 已占用目录 ${id}，勾选“覆盖”后可替换`)
     }
 
     const sourceDir = this.repoDirOf(repo.id)
-    const destDir = this.installedDir(scope, id)
     if (!fs.existsSync(path.join(sourceDir, ...safePath.split('/')))) {
       throw new Error('来源仓库中找不到该技能目录，请先同步仓库')
     }
-    if (dirConflict && options.overwrite) rmRobust(destDir)
+    if ((dirConflict || diskOccupied) && options.overwrite) rmRobust(destDir)
     fs.mkdirSync(destDir, { recursive: true })
 
     const copied: string[] = []
@@ -188,6 +257,16 @@ export class SkillsLifecycle {
       fs.mkdirSync(path.dirname(dest), { recursive: true })
       fs.copyFileSync(f.abs, dest)
       copied.push(f.rel)
+    }
+
+    // global 安装：把 SKILL.md 前导规范化为 kebab 名 + description，使 deepseek-harness 可识别
+    if (scope === 'global') {
+      const skillMd = copied.find((f) => f.toUpperCase() === 'SKILL.MD')
+      if (skillMd) {
+        const abs = path.join(destDir, ...skillMd.split('/'))
+        const current = fs.readFileSync(abs, 'utf8')
+        fs.writeFileSync(abs, ensureAgentSkillFrontmatter(current, id, skill.description ?? skill.name), 'utf8')
+      }
     }
 
     const now = this.now()
@@ -208,7 +287,7 @@ export class SkillsLifecycle {
     }
 
     manifest.skills = manifest.skills.filter((s) => s.key !== key)
-    if (dirConflict && options.overwrite) {
+    if ((dirConflict || diskOccupied) && options.overwrite) {
       manifest.skills = manifest.skills.filter((s) => s.id !== id)
     }
     manifest.skills.push(installed)
@@ -216,17 +295,25 @@ export class SkillsLifecycle {
     return installed
   }
 
-  /** 卸载：删除安装副本并移除清单登记。deleteRecord 为 true 时行为相同（兼容“删除”入口）。 */
+  /**
+   * 卸载：删除安装副本并移除清单登记。global 下也支持删除纯磁盘（未登记）的 agent 技能。
+   */
   uninstallSkill(scope: SkillScope, key: string): void {
     const manifest = this.readScope(scope)
+    let skill: InstalledSkill | undefined
     const idx = manifest.skills.findIndex((s) => s.key === key)
-    if (idx < 0) throw new Error('技能未安装')
-    const skill = manifest.skills[idx]
-    try {
+    if (idx >= 0) skill = manifest.skills[idx]
+    else if (scope === 'global') skill = this.listGlobal().find((s) => s.key === key)
+    if (!skill) throw new Error('技能未安装')
+    if (idx >= 0) {
+      try {
+        rmRobust(this.installedDir(scope, skill.id))
+      } finally {
+        manifest.skills.splice(idx, 1)
+        this.writeScope(scope, manifest)
+      }
+    } else {
       rmRobust(this.installedDir(scope, skill.id))
-    } finally {
-      manifest.skills.splice(idx, 1)
-      this.writeScope(scope, manifest)
     }
   }
 
@@ -235,7 +322,23 @@ export class SkillsLifecycle {
     this.uninstallSkill(scope, key)
   }
 
+  /**
+   * 启用/停用。global 作用域同时写 deepseek-harness 前导调用策略，使上游真实生效；
+   * 首次切换时把磁盘 agent 技能补进清单。
+   */
   setEnabled(scope: SkillScope, key: string, enabled: boolean): InstalledSkill {
+    if (scope === 'global') {
+      const current = this.listGlobal().find((s) => s.key === key)
+      if (!current) throw new Error('技能未安装')
+      const record: InstalledSkill = { ...current, enabled, updatedAt: this.now() }
+      const manifest = this.readScope('global')
+      const idx = manifest.skills.findIndex((s) => s.key === key)
+      if (idx >= 0) manifest.skills[idx] = record
+      else manifest.skills.push(record)
+      this.writeScope('global', manifest)
+      this.writeInvocationPolicy(record, enabled)
+      return record
+    }
     const manifest = this.readScope(scope)
     const idx = manifest.skills.findIndex((s) => s.key === key)
     if (idx < 0) throw new Error('技能未安装')
@@ -245,34 +348,74 @@ export class SkillsLifecycle {
     return { ...manifest.skills[idx], scope }
   }
 
+  /**
+   * 把启用/停用写入 SKILL.md 前导（目录束）或扁平 <name>.md 文件：
+   * 停用 -> disable-model-invocation: true + user-invocable: false；启用 -> 移除这两个键。
+   */
+  private writeInvocationPolicy(skill: InstalledSkill, enabled: boolean): void {
+    const flat = skill.repoId === AGENTS_SOURCE_ID && skill.path.endsWith('.md')
+    let skillFile: string | null = null
+    if (flat) {
+      skillFile = path.join(this.globalDir, ...skill.path.split('/'))
+    } else {
+      const dir = this.installedDir('global', skill.id)
+      skillFile = ['SKILL.md', 'SKILL.MD', 'skill.md']
+        .map((n) => path.join(dir, n))
+        .find((p) => {
+          try {
+            return fs.statSync(p).isFile()
+          } catch {
+            return false
+          }
+        }) ?? null
+    }
+    if (!skillFile || !fs.existsSync(skillFile)) return
+    const content = fs.readFileSync(skillFile, 'utf8')
+    fs.writeFileSync(skillFile, patchSkillFrontmatter(content, { setInvocation: enabled ? 'enabled' : 'disabled' }), 'utf8')
+  }
+
   /** 从任意来源安装文件 payload（备份/导入恢复用，不再依赖仓库缓存）。 */
   restoreFromPayload(
     scope: SkillScope,
     entry: Omit<InstalledSkill, 'scope' | 'installedAt' | 'updatedAt' | 'files'> & { files: Record<string, string> },
     options: { overwrite?: boolean; installedAt?: number; updatedAt?: number } = {},
   ): InstalledSkill {
-    const id = skillLeafName(entry.repoId, entry.path)
+    const id = this.safeId(entry.id) ?? this.dirIdFor(scope, entry.repoId, entry.path, entry.name)
     const key = skillKey(entry.repoId, entry.path)
+    const flat = scope === 'global' && (id.endsWith('.md') || entry.path.endsWith('.md'))
     const manifest = this.readScope(scope)
     const existing = manifest.skills.find((s) => s.key === key)
     const dirConflict = manifest.skills.find((s) => s.id === id && s.key !== key)
-    if (dirConflict && !options.overwrite) {
-      throw new Error(`目录冲突：技能 ${dirConflict.name} 已占用目录 ${id}，导入时可选择覆盖`)
+    const location = flat ? this.globalDir : this.installedDir(scope, id)
+    const dirOccupied = !flat && scope === 'global' && fs.existsSync(location) && !existing
+    if (!options.overwrite && (dirConflict || dirOccupied)) {
+      throw new Error(`目录冲突：技能 ${dirConflict?.name ?? id} 已占用目录 ${id}，导入时可选择覆盖`)
     }
-    const destDir = this.installedDir(scope, id)
-    if (dirConflict && options.overwrite) rmRobust(destDir)
-    fs.mkdirSync(destDir, { recursive: true })
+    if (!flat && (dirConflict || dirOccupied) && options.overwrite) rmRobust(location)
+    if (!flat) fs.mkdirSync(location, { recursive: true })
 
     const copied: string[] = []
     for (const [rel, content] of Object.entries(entry.files)) {
       const clean = sanitizeSkillPath(rel)
       if (!clean) continue
-      const dest = path.join(destDir, ...clean.split('/'))
+      const dest = flat ? path.join(this.globalDir, ...clean.split('/')) : path.join(location, ...clean.split('/'))
       fs.mkdirSync(path.dirname(dest), { recursive: true })
       fs.writeFileSync(dest, content, 'utf8')
       copied.push(clean)
     }
     if (copied.length === 0) throw new Error('备份内容中没有可恢复的文件')
+
+    // global 目录束：恢复时同样规范化 SKILL.md 前导
+    if (scope === 'global' && !flat) {
+      const skillMd = copied.find((f) => f.toUpperCase() === 'SKILL.MD')
+      if (skillMd) {
+        const abs = path.join(location, ...skillMd.split('/'))
+        if (fs.existsSync(abs)) {
+          const current = fs.readFileSync(abs, 'utf8')
+          fs.writeFileSync(abs, ensureAgentSkillFrontmatter(current, id, entry.description ?? entry.name), 'utf8')
+        }
+      }
+    }
 
     const now = this.now()
     const installed: InstalledSkill = {

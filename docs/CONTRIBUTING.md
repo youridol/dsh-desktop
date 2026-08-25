@@ -104,7 +104,7 @@ test(e2e): add plugin install/uninstall round-trip steps
 - [ ] IPC 边界：preload 桥保持窄、按窗口隔离；远端页面（DSH Web UI）不得获得 node / 敏感通道（`preload/loader.ts` 文件协议守卫逻辑）
 - [ ] 兼容性：改动兼容 NSIS 与 zip 便携两种运行目录形态（`paths.ts` 的 `isPortable` 判定）；Windows 分隔符 / `file://` URL 处理
 - [ ] 文档同步：行为 / 配置 / 构建步骤变化同步更新 `README.md` 与 `docs/`（或对应 `CHANGELOG.md` 条目）
-- [ ] Skills 隔离：Skills 功能只读 / 不修改 `deepseek-harness` 上游源码；仓库注册表与作用域数据仅存于 dsh-desktop 运行目录 `skills/`
+- [ ] Skills 隔离：Skills 功能不修改 `deepseek-harness` 上游源码，仅经适配层（`services/skills/harnessPaths.ts` + `SkillsLifecycle`）读写 `<agentsHome>/skills` 与自身运行目录 `skills/`（仓库缓存 / 备份 / 注册表 / 项目作用域）
 - [ ] 测试：第 6 节验证项完成并记录
 
 ## 许可

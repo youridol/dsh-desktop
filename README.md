@@ -13,7 +13,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 - **仪表盘（Dashboard）**（`src/renderer/control/tabs/dashboard.ts` + `tabs/dashboard/widgets/`）：控制面板默认页签，统一监控 DSH 服务运行状态、插件概要、版本概要与最近异常；监控模块经统一 Widget 注册表挂载，新增监控模块无需改核心架构。
 - **Skills 管理**（`src/main/services/skills/` + `src/renderer/control/tabs/skills.ts`）：独立 Skills 页签，全部能力在 dsh-desktop 内自管理，不修改 deepseek-harness 上游源码：
   - 自定义 Skills 仓库（默认示例 `https://github.com/mattpocock/skills`），添加 / 编辑 / 删除 / 启用停用 / 拉取刷新 / 全部同步；
-  - 全局与项目作用域隔离安装，单 / 批量启用、停用、卸载、删除；查看技能信息（来源仓库 / 路径 / commit / 状态）；
+  - 全局作用域 = deepseek-harness 真实 Agents/Skills 目录（`~/.agents/skills`，经 `$DSH_AGENTS_HOME` / 用户 Home 统一解析）：已有 Skills 自动发现并展示，安装按 harness 目录束规范（kebab 名 + SKILL.md 前导），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；单 / 批量启用、停用、卸载、删除；查看技能信息（来源仓库 / 路径 / commit / 状态）；
   - 检测上游更新并执行更新同步；GitHub Skills 搜索与一键安装；
   - 导出 / 导入 / 备份 / 恢复，导入时校验格式、版本、路径与冲突（`test/skills-service.test.mjs` 覆盖核心逻辑）。
 - **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh Harness）与 Profile 作为元数据写入 manifest 并展示在列表中：

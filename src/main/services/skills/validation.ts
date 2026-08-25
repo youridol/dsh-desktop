@@ -62,6 +62,35 @@ export function slugify(input: string, max = 80): string {
   return slug.length > max ? slug.slice(0, max).replace(/-+$/, '') : slug
 }
 
+/** deepseek-harness 本地全局 Skills 的来源标识（无仓库来源的 agent 技能）。 */
+export const AGENTS_SOURCE_ID = 'agents'
+
+/** deepseek-harness 技能名文法：kebab-case（与上游 SKILL_NAME 一致）。 */
+const AGENT_SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** 是否为 deepseek-harness 认可的 kebab-case 技能名。 */
+export function isAgentSkillName(value: unknown): value is string {
+  return typeof value === 'string' && AGENT_SKILL_NAME_RE.test(value)
+}
+
+/**
+ * kebab-case 化：仅保留小写字母数字与连字符（deepseek-harness 技能目录/名规范），
+ * 折叠连续连字符、去首尾连字符；无可保留字符时回退 'skill'。
+ */
+export function kebabSlug(input: string): string {
+  const base = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+  const slug = base || 'skill'
+  return isAgentSkillName(slug) ? slug : 'skill'
+}
+
+/** 本机全局（user-agents）技能的稳定清单键：agents:<skillName>。 */
+export function agentSkillKey(skillName: string): string {
+  return `${AGENTS_SOURCE_ID}:${skillName}`
+}
 /** 稳定短 hash（用于 id 冲突消解 / 短标识）。 */
 export function shortHash(input: string, len = 6): string {
   let h1 = 0x811c9dc5

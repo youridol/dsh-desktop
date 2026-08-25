@@ -80,7 +80,7 @@ flowchart TB
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
 | 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh Harness 由 `DshPluginInstaller.ts` 策略层分发）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出 | `src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` |
-| Skills 管理 | Skills 仓库注册表（URL/名称/启用/分支/commit/错误）+ git 克隆/拉取（`GitRunner`，凭据走 `http.extraHeader`）+ SKILL.md 目录发现；global/project 作用域安装清单（`skills/index.json`）与文件副本；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 仓库搜索与一键安装；JSON 导出导入 + 本地备份（`skills/backups/`），导入做格式/版本/路径/冲突校验 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
+| Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global 清单 = index.json + 磁盘扫描合并（已有 Skills 直接可见）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |
@@ -192,10 +192,15 @@ dsh/manager.ts setState()（状态机迁移）
   → discoverSkills() 扫描仓库内 SKILL.md 目录（frontmatter 元数据 + 文件清单）
   → 注册表写入 <runtime>/skills/repositories.json
 
+读取已安装（skills:listInstalled）
+  → global 作用域 = 清单 + discoverAgentSkills 磁盘扫描合并（仅一层：<name>/SKILL.md 目录束或 <name>.md 扁平），deepseek-harness 已有 Skills 直接可见
+
 安装（skills:install，SkillsLifecycle）
+  → 统一路径解析（harnessPaths：`~` 展开 + $DSH_AGENTS_HOME，禁止把 `~` 当相对路径）
   → 校验作用域（global/project）与技能路径（防穿越）
-  → 复制技能目录到 <runtime>/skills/<scope>/<id> 并登记 index.json
-  → 同一 key 原地更新；目录冲突需显式覆盖；启停只改清单，不删文件
+  → project：复制到 <runtime>/skills/project/<id>；global：复制到 <agentsHome>/skills/<kebab-name> 并规范化 SKILL.md 前导（kebab name + description），使 deepseek-harness 可发现
+  → 登记 index.json；同一 key 原地更新；目录冲突需显式覆盖
+  → global 启停额外写 frontmatter 调用策略（disable-model-invocation / user-invocable），对上游真实生效；卸载/删除移除目录与登记
 
 更新（skills:checkUpdates / skills:update）
   → 按来源仓库 ls-remote 对比已安装 commit → 对选中技能重新拉取并复制
@@ -236,7 +241,7 @@ dsh-desktop/
 ├── src/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
-│   │   ├── services/skills/      # Skills 管理（validation / discovery / gitRunner / repositoryManager / lifecycle / backup / skillsService）
+│   │   ├── services/skills/      # Skills 管理（validation / discovery / harnessPaths / gitRunner / repositoryManager / lifecycle / backup / skillsService）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）
 │   └── renderer/               # 无框架页面：loader / floating / control（tabs/ 含 dashboard/ Widget 注册表与 widgets/、skills.ts）
@@ -267,4 +272,4 @@ dsh-desktop/
 | NSIS 安装版 | `%APPDATA%\DSH Desktop\` | `index.ts` 的 `app.setPath('userData', …)` |
 | zip 便携版 | exe 所在目录 | `resources/portable.marker` 存在 |
 
-目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）、`skills/`（Skills 仓库缓存 `repos/`、作用域安装副本 `global/` + `project/`、注册表 `repositories.json`、备份 `backups/`）。插件本体与装载不再存于本目录——全部经 dsh harness Web profile（`$DSH_HOME/profiles/web/`）管理，由 dsh CLI 与 profile manifest 统一负责。
+目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）、`skills/`（Skills 仓库缓存 `repos/`、项目作用域 `project/`、注册表 `repositories.json`、备份 `backups/`）。全局 Skills 作用域直接读写 deepseek-harness 的全局根 `<agentsHome>/skills`（`$DSH_AGENTS_HOME` 或 `~/.agents`），仓库/备份/注册表仍留在本目录。插件本体与装载不再存于本目录——全部经 dsh harness Web profile（`$DSH_HOME/profiles/web/`）管理，由 dsh CLI 与 profile manifest 统一负责。

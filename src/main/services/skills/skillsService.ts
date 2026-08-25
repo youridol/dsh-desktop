@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { dialog } from 'electron'
 import { getPaths } from '../../paths'
+import { resolveSkillsPaths } from './harnessPaths'
 import { getConfig, readCredentials } from '../../config'
 import { appLog } from '../../logger'
 import { getControlPanel } from '../../windows/control'
@@ -35,6 +36,7 @@ import {
 import {
   isValidSkillScope,
   isValidScopeFilter,
+  AGENTS_SOURCE_ID,
   type SkillScope,
   type ScopeFilter,
 } from './validation'
@@ -60,18 +62,29 @@ interface SkillsPaths {
   projectDir: string
   backupsDir: string
   configFile: string
+  agentsHome: string
 }
 
+/**
+ * 统一路径解析：globalDir = <agentsHome>/skills（deepseek-harness 真实全局根），
+ * 仓库缓存/备份/注册表仍位于 dsh-desktop 运行目录；config 覆盖路径支持 `~` 前缀。
+ */
 function skillsPaths(): SkillsPaths {
   const base = getPaths().skillsDir
   const projectOverride = getConfig().skills?.projectDir
+  const p = resolveSkillsPaths({
+    runtimeSkillsDir: base,
+    projectDir: projectOverride,
+    env: process.env,
+  })
   return {
-    skillsDir: base,
-    reposDir: path.join(base, 'repos'),
-    globalDir: path.join(base, 'global'),
-    projectDir: projectOverride || path.join(base, 'project'),
-    backupsDir: path.join(base, 'backups'),
-    configFile: path.join(base, 'repositories.json'),
+    skillsDir: p.skillsDir,
+    reposDir: p.reposDir,
+    globalDir: p.globalDir,
+    projectDir: p.projectDir,
+    backupsDir: p.backupsDir,
+    configFile: p.configFile,
+    agentsHome: p.agentsHome,
   }
 }
 
@@ -240,8 +253,11 @@ export async function checkSkillUpdates(scope?: SkillScope): Promise<{
 }> {
   const { manager, lifecycle: lc } = ensureServices()
   const installed = lc.listInstalled(scope)
+  // 本机全局 agent 技能无来源仓库，不参与仓库 commit 对比
   const byRepo = new Map<string, InstalledSkill[]>()
   for (const s of installed) {
+    if (s.repoId === AGENTS_SOURCE_ID) continue
+    if (!manager.get(s.repoId)) continue
     const list = byRepo.get(s.repoId) ?? []
     list.push(s)
     byRepo.set(s.repoId, list)
@@ -292,6 +308,10 @@ export async function updateSkills(keys: string[], scope?: SkillScope): Promise<
     const skill = byKey.get(key)
     if (!skill) {
       failed.push({ key, error: '技能未安装' })
+      continue
+    }
+    if (skill.repoId === AGENTS_SOURCE_ID) {
+      failed.push({ key, error: '本地全局 Skills 无来源仓库，无法按仓库更新' })
       continue
     }
     try {
@@ -387,7 +407,10 @@ function exportResolver() {
       }
     },
     installedFileAbs: (scope: SkillScope, id: string, rel: string) =>
-      path.join(lc.scopeDir(scope), id, ...rel.split('/')),
+      // 扁平 agent 技能：文件即 <globalDir>/<name>.md，rel 与 id 同源
+      scope === 'global' && id.endsWith('.md') && rel === id
+        ? path.join(lc.scopeDir(scope), id)
+        : path.join(lc.scopeDir(scope), id, ...rel.split('/')),
   }
 }
 
@@ -478,6 +501,7 @@ export function getSkillsState(): {
   globalDir: string
   projectDir: string
   backupsDir: string
+  agentsHome: string
   defaultRepository: string
   repositoryCount: number
   installedCount: number
@@ -489,6 +513,7 @@ export function getSkillsState(): {
     globalDir: paths.globalDir,
     projectDir: paths.projectDir,
     backupsDir: paths.backupsDir,
+    agentsHome: paths.agentsHome,
     defaultRepository: 'https://github.com/mattpocock/skills',
     repositoryCount: manager.list().length,
     installedCount: lc.listInstalled().length,
