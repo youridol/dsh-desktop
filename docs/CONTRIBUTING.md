@@ -87,6 +87,7 @@ test(e2e): add plugin install/uninstall round-trip steps
 - 新增功能必须附带可执行的验证；缺陷修复必须附复现 / 回归说明；
 - 类型检查：`npm run typecheck` 必须零错误（CI 强制，见 `.github/workflows/build-and-release.yml`）；
 - 仪表盘相关改动需运行 `node --test test/dashboard-widget.test.mjs`（Widget 注册表回归）；
+- Skills 相关改动需运行 `node --test test/skills-service.test.mjs`（校验 / 发现 / 仓库注册表 / 生命周期 / 备份导入回归）；
 - 打包链验证：`npm run build` +（涉及运行时变更时）`npm run fetch-dsh && npm run dist` 本地通过；
 - 端到端：以 `--remote-debugging-port=9222` 启动应用，用 `node scripts/e2e-driver.mjs <step> [args]` 走通 `window.dshc` 桥接断言（`scripts/e2e-driver.mjs`；可用 step 见 `exprs` 表）；涉及插件功能时使用 `.e2e/test-plugin/` fixture；
 - CI 全绿后方可合并；`build-and-release.yml` 在 push 后会自动构建，以该运行结果为准。
@@ -103,6 +104,7 @@ test(e2e): add plugin install/uninstall round-trip steps
 - [ ] IPC 边界：preload 桥保持窄、按窗口隔离；远端页面（DSH Web UI）不得获得 node / 敏感通道（`preload/loader.ts` 文件协议守卫逻辑）
 - [ ] 兼容性：改动兼容 NSIS 与 zip 便携两种运行目录形态（`paths.ts` 的 `isPortable` 判定）；Windows 分隔符 / `file://` URL 处理
 - [ ] 文档同步：行为 / 配置 / 构建步骤变化同步更新 `README.md` 与 `docs/`（或对应 `CHANGELOG.md` 条目）
+- [ ] Skills 隔离：Skills 功能只读 / 不修改 `deepseek-harness` 上游源码；仓库注册表与作用域数据仅存于 dsh-desktop 运行目录 `skills/`
 - [ ] 测试：第 6 节验证项完成并记录
 
 ## 许可

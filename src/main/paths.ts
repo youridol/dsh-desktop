@@ -21,6 +21,8 @@ export interface AppPaths {
   versionsDir: string
   downloadsDir: string
   logsDir: string
+  /** dsh-desktop 管理的 Skills 数据根目录（仓库缓存 / 作用域 / 备份）。 */
+  skillsDir: string
   /** Generated cordis patch overlay passed to `dsh web --patch`. */
   patchFile: string
   /** True when running from the portable zip (runtime data lives next to the exe). */
@@ -94,6 +96,7 @@ export function getPaths(): AppPaths {
     versionsDir: path.join(dir, 'versions'),
     downloadsDir: path.join(dir, 'downloads'),
     logsDir: path.join(dir, 'logs'),
+    skillsDir: path.join(dir, 'skills'),
     patchFile: path.join(dir, 'cordis.patch.yml'),
     isPortable: portable,
   }
@@ -102,7 +105,7 @@ export function getPaths(): AppPaths {
 
 export function ensureRuntimeDirs(): void {
   const p = getPaths()
-  for (const dir of [p.runtimeDir, p.pluginsDir, p.versionsDir, p.downloadsDir, p.logsDir]) {
+  for (const dir of [p.runtimeDir, p.pluginsDir, p.versionsDir, p.downloadsDir, p.logsDir, p.skillsDir]) {
     fs.mkdirSync(dir, { recursive: true })
   }
 }

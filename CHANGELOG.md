@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.7.0] - 2026-08-26
+
+### 新增（控制面板 Skills 管理页签）
+
+控制面板新增「Skills」页签，Skills 能力完全在 dsh-desktop 内自管理（仓库注册表、作用域安装、备份恢复），不修改 `deepseek-harness` 上游源码，未来上游升级无需本项目私有改动：
+
+- **主进程 Skills Service**（`src/main/services/skills/`）：`validation.ts`（URL / 名称 / 路径 / 作用域校验）、`discovery.ts`（扫描仓库内 SKILL.md 技能目录与 frontmatter 元数据）、`gitRunner.ts`（浅克隆 / 拉取，凭据经 `http.extraHeader` 传递）、`repositoryManager.ts`（仓库注册表 `skills/repositories.json` + 克隆缓存 `skills/repos/`）、`lifecycle.ts`（global/project 作用域隔离安装清单 `skills/<scope>/index.json`）、`backup.ts`（JSON 导出导入 + 本地备份）、`skillsService.ts`（门面，供 IPC 调用）。
+- **仓库管理**：添加 / 编辑 / 删除 / 启用停用 / 拉取刷新 / 全部同步；默认示例仓库 `https://github.com/mattpocock/skills`；私有仓库复用设置页 GitHub 凭据。
+- **Skills 生命周期**：查看全局与项目 Skills；单 / 批量启用、停用、卸载、删除；查看来源仓库、路径、commit、安装状态；检测上游更新（对比来源 commit）并执行更新同步。
+- **GitHub 搜索**：`skills:search` 走 GitHub Search API，支持一键添加仓库并安装到当前作用域。
+- **备份与迁移**：导出配置 / 导出含技能内容 / 导入 / 创建备份 / 恢复 / 删除备份；导入校验格式版本、路径安全与冲突（已存在技能默认冲突，可覆盖）。
+- **测试**（`test/skills-service.test.mjs`）：19 个用例覆盖校验、发现、仓库注册表同步、生命周期作用域隔离、备份导入恢复。
+
 ## [v0.6.0] - 2026-08-25
 
 ### 新增（控制面板仪表盘 Dashboard）

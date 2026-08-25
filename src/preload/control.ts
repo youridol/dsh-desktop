@@ -20,6 +20,41 @@ const api = {
   exportPlugin: (id: string) => ipcRenderer.invoke('plugins:export', id),
   applyPlugins: () => ipcRenderer.invoke('plugins:apply'),
 
+  // ---- skills ----
+  listSkillRepos: () => ipcRenderer.invoke('skills:listRepos'),
+  addSkillRepo: (input: { url: string; name?: string }) => ipcRenderer.invoke('skills:addRepo', input),
+  updateSkillRepo: (id: string, patch: { name?: string; url?: string }) =>
+    ipcRenderer.invoke('skills:updateRepo', id, patch),
+  setSkillRepoEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('skills:setRepoEnabled', id, enabled),
+  removeSkillRepo: (id: string) => ipcRenderer.invoke('skills:removeRepo', id),
+  syncSkillRepo: (id: string) => ipcRenderer.invoke('skills:syncRepo', id),
+  syncAllSkillRepos: () => ipcRenderer.invoke('skills:syncAllRepos'),
+  listAvailableSkills: (repoId: string) => ipcRenderer.invoke('skills:listAvailable', repoId),
+  listInstalledSkills: (scope?: 'global' | 'project') => ipcRenderer.invoke('skills:listInstalled', scope),
+  installSkill: (opts: { repoId: string; path: string; scope: 'global' | 'project'; overwrite?: boolean }) =>
+    ipcRenderer.invoke('skills:install', opts),
+  installAllFromRepo: (opts: { repoId: string; scope: 'global' | 'project'; overwrite?: boolean }) =>
+    ipcRenderer.invoke('skills:installAll', opts),
+  uninstallSkill: (key: string, scope: 'global' | 'project') => ipcRenderer.invoke('skills:uninstall', key, scope),
+  deleteSkill: (key: string, scope: 'global' | 'project') => ipcRenderer.invoke('skills:delete', key, scope),
+  setSkillEnabled: (key: string, scope: 'global' | 'project', enabled: boolean) =>
+    ipcRenderer.invoke('skills:setEnabled', key, scope, enabled),
+  batchSkills: (keys: string[], scope: 'global' | 'project', action: 'enable' | 'disable' | 'uninstall' | 'delete') =>
+    ipcRenderer.invoke('skills:batch', keys, scope, action),
+  checkSkillUpdates: (scope?: 'global' | 'project') => ipcRenderer.invoke('skills:checkUpdates', scope),
+  updateSkills: (keys: string[], scope?: 'global' | 'project') => ipcRenderer.invoke('skills:update', keys, scope),
+  searchSkills: (query: string) => ipcRenderer.invoke('skills:search', query),
+  installSkillFromSearch: (opts: { fullName: string; scope: 'global' | 'project' }) =>
+    ipcRenderer.invoke('skills:installSearch', opts),
+  exportSkills: (opts: { scope?: 'all' | 'global' | 'project'; includePayload?: boolean }) =>
+    ipcRenderer.invoke('skills:export', opts),
+  importSkills: () => ipcRenderer.invoke('skills:import'),
+  createSkillBackup: (scope?: 'all' | 'global' | 'project') => ipcRenderer.invoke('skills:createBackup', scope),
+  listSkillBackups: () => ipcRenderer.invoke('skills:listBackups'),
+  restoreSkillBackup: (id: string, scope?: 'global' | 'project') => ipcRenderer.invoke('skills:restoreBackup', id, scope),
+  deleteSkillBackup: (id: string) => ipcRenderer.invoke('skills:deleteBackup', id),
+  getSkillsState: () => ipcRenderer.invoke('skills:getState'),
+
   listVersions: () => ipcRenderer.invoke('versions:list'),
   checkUpdates: (source?: 'release' | 'commit') => ipcRenderer.invoke('versions:check', source),
   downloadVersion: (version: string) => ipcRenderer.invoke('versions:download', version),

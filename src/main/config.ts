@@ -31,6 +31,8 @@ export interface AppConfig {
   plugins: PluginRecord[]
   /** 用户卸载过的内置插件预设 id（已废弃，保留字段兼容旧配置）。 */
   suppressedPresets?: string[]
+  /** Skills：可覆盖项目作用域安装目录（默认 <runtime>/skills/project）。 */
+  skills?: { projectDir?: string }
   /** Floating ball offset from the main window's bottom-right corner (px). */
   ballOffset: { x: number; y: number } | null
   checkUpdatesOnStart: boolean
@@ -43,8 +45,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   plugins: [],
   ballOffset: null,
   checkUpdatesOnStart: true,
+  skills: {},
 }
-
 
 export const configEvents = new EventEmitter()
 
@@ -79,6 +81,11 @@ function load(): AppConfig {
       merged.ballOffset = raw.ballOffset
     }
     if (typeof raw.checkUpdatesOnStart === 'boolean') merged.checkUpdatesOnStart = raw.checkUpdatesOnStart
+    if (raw.skills && typeof raw.skills === 'object') {
+      const s = raw.skills as Record<string, unknown>
+      if (typeof s.projectDir === 'string' && s.projectDir.trim()) merged.skills = { projectDir: s.projectDir.trim() }
+      else merged.skills = {}
+    }
     return merged
   } catch {
     return { ...DEFAULT_CONFIG }

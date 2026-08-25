@@ -74,6 +74,97 @@ export interface AppSettings {
   checkUpdatesOnStart: boolean
 }
 
+// ---- skills ----
+
+export type SkillScope = 'global' | 'project'
+export type ScopeFilter = SkillScope | 'all'
+
+export interface SkillRepositoryView {
+  id: string
+  name: string
+  url: string
+  branch: string | null
+  enabled: boolean
+  addedAt: number
+  lastSyncAt: number | null
+  lastCommit: string | null
+  lastSyncError: string | null
+  skillsCount: number | null
+}
+
+export interface DiscoveredSkill {
+  id: string
+  name: string
+  description: string | null
+  path: string
+  skillFile: string
+  files: string[]
+}
+
+export interface InstalledSkill {
+  key: string
+  id: string
+  name: string
+  description: string | null
+  repoId: string
+  repoUrl: string
+  path: string
+  scope: SkillScope
+  commit: string | null
+  installedAt: number
+  updatedAt: number
+  enabled: boolean
+  files: string[]
+  error?: string
+}
+
+export interface SkillBackupView {
+  id: string
+  dir: string
+  createdAt: number
+  scope: ScopeFilter
+  repoCount: number
+  skillCount: number
+  sizeBytes: number
+}
+
+export interface SkillsState {
+  skillsDir: string
+  reposDir: string
+  globalDir: string
+  projectDir: string
+  backupsDir: string
+  defaultRepository: string
+  repositoryCount: number
+  installedCount: number
+}
+
+export interface SkillImportReport {
+  importedRepositories: number
+  existingRepositories: number
+  importedSkills: number
+  conflicts: Array<{ key: string; reason: string }>
+  skipped: number
+}
+
+export interface GitHubSkillSearchResult {
+  fullName: string
+  name: string
+  owner: string
+  url: string
+  description: string | null
+  stars: number
+  updatedAt: string | null
+  defaultBranch: string | null
+}
+
+export interface UpdateCheckResult {
+  checkedAt: number
+  updated: Array<{ key: string; current: string | null; latest: string }>
+  upToDate: number
+  errors: Array<{ repoId: string; error: string }>
+}
+
 export interface AppState {
   status: DshStatus
   config: AppSettings & { plugins: unknown[] }
@@ -126,7 +217,34 @@ export interface Bridge {
 
   setSettings: (patch: Partial<AppSettings>) => Promise<{ config: AppSettings; autoStart: boolean; needsRestart: boolean }>
   applyRestart: () => Promise<void>
-  getCredentials: () => Promise<{ githubUser: string; githubToken: string; hasToken: boolean }>
+    // ---- skills ----
+  listSkillRepos: () => Promise<SkillRepositoryView[]>
+  addSkillRepo: (input: { url: string; name?: string }) => Promise<{ repo: SkillRepositoryView; existed: boolean }>
+  updateSkillRepo: (id: string, patch: { name?: string; url?: string }) => Promise<SkillRepositoryView>
+  setSkillRepoEnabled: (id: string, enabled: boolean) => Promise<SkillRepositoryView>
+  removeSkillRepo: (id: string) => Promise<SkillRepositoryView[]>
+  syncSkillRepo: (id: string) => Promise<SkillRepositoryView>
+  syncAllSkillRepos: () => Promise<{ synced: number; failed: Array<{ id: string; error: string }> }>
+  listAvailableSkills: (repoId: string) => Promise<{ repo: SkillRepositoryView; skills: DiscoveredSkill[] }>
+  listInstalledSkills: (scope?: SkillScope) => Promise<InstalledSkill[]>
+  installSkill: (opts: { repoId: string; path: string; scope: SkillScope; overwrite?: boolean }) => Promise<InstalledSkill>
+  installAllFromRepo: (opts: { repoId: string; scope: SkillScope; overwrite?: boolean }) => Promise<{ installed: InstalledSkill[]; failed: Array<{ path: string; error: string }> }>
+  uninstallSkill: (key: string, scope: SkillScope) => Promise<InstalledSkill[]>
+  deleteSkill: (key: string, scope: SkillScope) => Promise<InstalledSkill[]>
+  setSkillEnabled: (key: string, scope: SkillScope, enabled: boolean) => Promise<InstalledSkill>
+  batchSkills: (keys: string[], scope: SkillScope, action: 'enable' | 'disable' | 'uninstall' | 'delete') => Promise<{ done: string[]; failed: Array<{ key: string; error: string }> }>
+  checkSkillUpdates: (scope?: SkillScope) => Promise<UpdateCheckResult>
+  updateSkills: (keys: string[], scope?: SkillScope) => Promise<{ updated: InstalledSkill[]; failed: Array<{ key: string; error: string }> }>
+  searchSkills: (query: string) => Promise<GitHubSkillSearchResult[]>
+  installSkillFromSearch: (opts: { fullName: string; scope: SkillScope }) => Promise<{ repository: SkillRepositoryView; installed: InstalledSkill[]; available: DiscoveredSkill[] }>
+  exportSkills: (opts: { scope?: ScopeFilter; includePayload?: boolean }) => Promise<{ canceled: boolean; filePath?: string; count?: number }>
+  importSkills: () => Promise<{ canceled: boolean; filePath?: string; report?: SkillImportReport }>
+  createSkillBackup: (scope?: ScopeFilter) => Promise<SkillBackupView>
+  listSkillBackups: () => Promise<SkillBackupView[]>
+  restoreSkillBackup: (id: string, scope?: SkillScope) => Promise<SkillImportReport>
+  deleteSkillBackup: (id: string) => Promise<SkillBackupView[]>
+  getSkillsState: () => Promise<SkillsState>
+getCredentials: () => Promise<{ githubUser: string; githubToken: string; hasToken: boolean }>
   saveCredentials: (user: string, token: string) => Promise<boolean>
 
   subscribeLogs: () => Promise<LogLine[]>

@@ -1,6 +1,7 @@
 /** Control panel shell: tabs, toast, wiring of the five modules. */
 import { initDashboard } from './tabs/dashboard'
 import { initPlugins } from './tabs/plugins'
+import { initSkills } from './tabs/skills'
 import { initVersions } from './tabs/versions'
 import { initStatus } from './tabs/status'
 import { initSettings } from './tabs/settings'
@@ -23,6 +24,7 @@ document.getElementById('closeBtn')!.addEventListener('click', () => {
 const panes: Record<string, HTMLElement> = {
   dashboard: document.getElementById('pane-dashboard')!,
   plugins: document.getElementById('pane-plugins')!,
+  skills: document.getElementById('pane-skills')!,
   versions: document.getElementById('pane-versions')!,
   status: document.getElementById('pane-status')!,
   settings: document.getElementById('pane-settings')!,
@@ -32,6 +34,7 @@ const initialized = new Set<string>()
 const initializers: Record<string, () => void> = {
   dashboard: () => initDashboard(panes.dashboard, toast),
   plugins: () => initPlugins(panes.plugins, toast),
+  skills: () => initSkills(panes.skills, toast),
   versions: () => initVersions(panes.versions, toast),
   status: () => initStatus(panes.status),
   settings: () => initSettings(panes.settings, toast),

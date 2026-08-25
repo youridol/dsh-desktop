@@ -269,3 +269,15 @@ a { color: #9fb4ff; }
 .dash-mini-list { display: flex; flex-direction: column; gap: 4px; }
 .dash-mini-list .row { flex-wrap: nowrap; }
 .dash-mini-list .txt { font-size: 12px; }
+/* ---- skills tab ---- */
+button.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn.active:hover { filter: brightness(1.12); }
+.repo-detail, .skill-detail {
+  background: #10151b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+.repo-detail .item { border-bottom-color: #232c38; }
+.skill-detail pre { margin: 6px 0 0; }

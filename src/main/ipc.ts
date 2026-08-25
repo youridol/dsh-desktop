@@ -10,6 +10,7 @@ import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
 import type { InstallPluginOptions } from './services/dsh/DshPluginService'
+import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
 import { ballClicked, dragBallBy } from './windows/floating'
@@ -94,6 +95,67 @@ export function registerIpc(): void {
     return dsh.getStatus()
   })
 
+  // ---- skills (dsh-desktop 自身管理的 Skills 仓库 / 生命周期 / 备份) ----
+  ipcMain.handle('skills:listRepos', () => skills.listRepositories())
+  ipcMain.handle('skills:addRepo', async (_e, input: { url: string; name?: string }) => skills.addRepository(input))
+  ipcMain.handle('skills:updateRepo', (_e, id: string, patch: { name?: string; url?: string }) =>
+    skills.updateRepository(id, patch),
+  )
+  ipcMain.handle('skills:setRepoEnabled', (_e, id: string, enabled: boolean) =>
+    skills.setRepositoryEnabled(id, enabled),
+  )
+  ipcMain.handle('skills:removeRepo', (_e, id: string) => {
+    skills.removeRepository(id)
+    return skills.listRepositories()
+  })
+  ipcMain.handle('skills:syncRepo', async (_e, id: string) => skills.syncRepository(id))
+  ipcMain.handle('skills:syncAllRepos', async () => skills.syncAllRepositories())
+  ipcMain.handle('skills:listAvailable', (_e, repoId: string) => skills.availableSkills(repoId))
+  ipcMain.handle('skills:listInstalled', (_e, scope?: 'global' | 'project') => skills.listInstalled(scope))
+  ipcMain.handle('skills:install', (_e, opts: { repoId: string; path: string; scope: 'global' | 'project'; overwrite?: boolean }) =>
+    skills.installSkillFromRepo(opts),
+  )
+  ipcMain.handle('skills:installAll', (_e, opts: { repoId: string; scope: 'global' | 'project'; overwrite?: boolean }) =>
+    skills.installAllFromRepo(opts),
+  )
+  ipcMain.handle('skills:uninstall', (_e, key: string, scope: 'global' | 'project') => {
+    skills.uninstallSkill(key, scope)
+    return skills.listInstalled(scope)
+  })
+  ipcMain.handle('skills:delete', (_e, key: string, scope: 'global' | 'project') => {
+    skills.deleteSkill(key, scope)
+    return skills.listInstalled(scope)
+  })
+  ipcMain.handle('skills:setEnabled', (_e, key: string, scope: 'global' | 'project', enabled: boolean) =>
+    skills.setSkillEnabled(key, scope, enabled),
+  )
+  ipcMain.handle('skills:batch', (_e, keys: string[], scope: 'global' | 'project', action: string) =>
+    skills.batchSkills(keys, scope, action as 'enable' | 'disable' | 'uninstall' | 'delete'),
+  )
+  ipcMain.handle('skills:checkUpdates', async (_e, scope?: 'global' | 'project') =>
+    skills.checkSkillUpdates(scope),
+  )
+  ipcMain.handle('skills:update', async (_e, keys: string[], scope?: 'global' | 'project') =>
+    skills.updateSkills(keys, scope),
+  )
+  ipcMain.handle('skills:search', (_e, query: string) => skills.searchGitHubSkills(query))
+  ipcMain.handle('skills:installSearch', async (_e, opts: { fullName: string; scope: 'global' | 'project' }) =>
+    skills.installFromGitHubSearch(opts),
+  )
+  ipcMain.handle('skills:export', async (_e, opts: { scope?: 'all' | 'global' | 'project'; includePayload?: boolean }) =>
+    skills.exportSkills(opts),
+  )
+  ipcMain.handle('skills:import', async () => skills.importSkills())
+  ipcMain.handle('skills:createBackup', (_e, scope?: 'all' | 'global' | 'project') => skills.createBackup(scope))
+  ipcMain.handle('skills:listBackups', () => skills.listSkillBackups())
+  ipcMain.handle('skills:restoreBackup', async (_e, id: string, scope?: 'global' | 'project') =>
+    skills.restoreBackup(id, scope),
+  )
+  ipcMain.handle('skills:deleteBackup', (_e, id: string) => {
+    skills.removeBackup(id)
+    return skills.listSkillBackups()
+  })
+  ipcMain.handle('skills:getState', () => skills.getSkillsState())
   // ---- versions ----
   ipcMain.handle('versions:list', () => versions.listInstalled())
   ipcMain.handle('versions:check', (_e, source?: 'release' | 'commit') => versions.checkForUpdates(source))
@@ -170,3 +232,4 @@ export function registerIpc(): void {
   // DSH status changes also go to every subscriber (forwardStatus wires the first).
   dsh.dshEvents.on('status', (status) => pushToSubscribers('dsh:status', status))
 }
+

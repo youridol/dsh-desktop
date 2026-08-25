@@ -15,6 +15,7 @@ flowchart TB
         DSHINST["dsh/install.ts 版本安装<br/>（npm 安装 / 源码构建 / 运行时解包）"]
         DSHREL["dsh/releases.ts GitHub Releases 客户端"]
         PLUGINS["services/dsh/ 插件管理<br/>（dsh CLI 调用方 + profile 读取）"]
+        SKILLS["services/skills/ Skills 管理<br/>（仓库 / 作用域 / 备份，git CLI + GitHub API）"]
         VERSIONS["versions.ts 版本管理"]
     end
 
@@ -27,7 +28,7 @@ flowchart TB
     subgraph renderer（src/renderer/，原生 HTML/CSS/TS）
         RLOADER["loader/ 加载页（加载态 / 错误 + 重试）"]
         RBALL["floating/ 悬浮球（拖动 / 单击）"]
-        RCTRL["control/ 控制面板<br/>tabs: dashboard · plugins · versions · status · settings"]
+        RCTRL["control/ 控制面板<br/>tabs: dashboard · plugins · skills · versions · status · settings"]
     end
 
     subgraph 外部
@@ -79,6 +80,7 @@ flowchart TB
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
 | 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh Harness 由 `DshPluginInstaller.ts` 策略层分发）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出 | `src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` |
+| Skills 管理 | Skills 仓库注册表（URL/名称/启用/分支/commit/错误）+ git 克隆/拉取（`GitRunner`，凭据走 `http.extraHeader`）+ SKILL.md 目录发现；global/project 作用域安装清单（`skills/index.json`）与文件副本；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 仓库搜索与一键安装；JSON 导出导入 + 本地备份（`skills/backups/`），导入做格式/版本/路径/冲突校验 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |
@@ -181,6 +183,31 @@ dsh/manager.ts setState()（状态机迁移）
   → 主窗口（loader 导航决策 / 错误态）、悬浮球可见性、托盘菜单与 tooltip、控制面板状态卡
 ```
 
+### 3.6 Skills 管理流程
+
+```
+添加 / 同步仓库（skills:addRepo / skills:syncRepo，SkillsRepositoryManager + GitRunner）
+  → 校验 URL（http(s)，禁凭据内嵌）→ git ls-remote --symref HEAD 取默认分支/commit
+  → 浅克隆（私有仓库经 http.extraHeader 携带 GitHub 凭据，命令参数不落盘）
+  → discoverSkills() 扫描仓库内 SKILL.md 目录（frontmatter 元数据 + 文件清单）
+  → 注册表写入 <runtime>/skills/repositories.json
+
+安装（skills:install，SkillsLifecycle）
+  → 校验作用域（global/project）与技能路径（防穿越）
+  → 复制技能目录到 <runtime>/skills/<scope>/<id> 并登记 index.json
+  → 同一 key 原地更新；目录冲突需显式覆盖；启停只改清单，不删文件
+
+更新（skills:checkUpdates / skills:update）
+  → 按来源仓库 ls-remote 对比已安装 commit → 对选中技能重新拉取并复制
+
+搜索 / 一键安装（skills:search，GitHub Search API）
+  → api.github.com/search/repositories（Bearer 凭据）→ addRepo + installAllFromRepo
+
+备份 / 迁移（skills:export / skills:import / skills:createBackup）
+  → buildExport 生成 kind=dsh-desktop.skills-backup JSON（仓库 + 清单 + 可选文件 payload）
+  → 导入校验格式/版本/路径/冲突后 applyExportBundle：仓库已存在跳过、技能已安装默认冲突、可覆盖
+  → 本地备份写入 <runtime>/skills/backups/backup-<ts>/backup.json
+```
 ## 4. 技术选型说明
 
 | 决策 | 选型 | 理由（源码佐证） | 备选方案与排除理由 |
@@ -209,9 +236,10 @@ dsh-desktop/
 ├── src/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
+│   │   ├── services/skills/      # Skills 管理（validation / discovery / gitRunner / repositoryManager / lifecycle / backup / skillsService）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）
-│   └── renderer/               # 无框架页面：loader / floating / control（tabs/ 含 dashboard/ Widget 注册表与 widgets/）
+│   └── renderer/               # 无框架页面：loader / floating / control（tabs/ 含 dashboard/ Widget 注册表与 widgets/、skills.ts）
 ├── package.json                # 版本、scripts、devDependencies（应用本体零运行时依赖）
 ├── package-lock.json           # 依赖锁（lockfileVersion 3）
 ├── electron-builder.yml        # 打包配置（NSIS + zip、extraResources、afterPack）
@@ -239,4 +267,4 @@ dsh-desktop/
 | NSIS 安装版 | `%APPDATA%\DSH Desktop\` | `index.ts` 的 `app.setPath('userData', …)` |
 | zip 便携版 | exe 所在目录 | `resources/portable.marker` 存在 |
 
-目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）。插件本体与装载不再存于本目录——全部经 dsh harness Web profile（`$DSH_HOME/profiles/web/`）管理，由 dsh CLI 与 profile manifest 统一负责。
+目录内包含：`config.json`（设置）、`credentials.json`（GitHub 凭据，明文，`.gitignore` 排除）、`versions/`（含 `_bundled/` 与已下载版本）、`downloads/`（源码安装缓存）、`logs/`（`main.log`）、`skills/`（Skills 仓库缓存 `repos/`、作用域安装副本 `global/` + `project/`、注册表 `repositories.json`、备份 `backups/`）。插件本体与装载不再存于本目录——全部经 dsh harness Web profile（`$DSH_HOME/profiles/web/`）管理，由 dsh CLI 与 profile manifest 统一负责。
