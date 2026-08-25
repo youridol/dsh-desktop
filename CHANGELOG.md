@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.7.1] - 2026-08-26
+
+### 修复（Skills 管理页对接 deepseek-harness Agents/Skills）
+
+- **统一路径解析**（新增 `src/main/services/skills/harnessPaths.ts`）：`~` / `~/` / `~\` 前缀一律按用户 Home（`os.homedir()`）展开，禁止把 `~` 当作普通相对路径；`agentsHome` 遵循 `$DSH_AGENTS_HOME`（缺省 `~/.agents`），与上游 `dsh-skill-filesystem` 语义一致，Windows/Linux/macOS 均正确解析。
+- **全局 Skills 路径修正**：`global` 作用域从 dsh-desktop 私有 `skills/global` 改为 deepseek-harness 真实全局根 `<agentsHome>/skills`（Windows 例如 `C:\\Users\\Administrator\\.agents\\skills`）；启动、刷新、安装、启用/禁用、删除均基于该真实路径与统一路径解析逻辑。
+- **已有 Skills 可见**：`skills:listInstalled`（global）改为「清单 + 磁盘扫描合并」，deepseek-harness 已有 agent 技能（`<name>/SKILL.md` 目录束或 `<name>.md` 扁平，单层扫描）直接显示并可管理；安装到全局按 harness 规范（kebab 目录名 + SKILL.md 前导 `name`/`description` 规范化）。
+- **启停对上游真实生效**：全局技能启用/停用额外写/删 `disable-model-invocation` / `user-invocable` 前导策略，与 deepseek-harness 机制兼容；更新/检测更新跳过无仓库来源的本地 agent 技能。
+- **测试扩充**：`test/skills-service.test.mjs` 新增路径解析（~ 展开 / agentsHome / 统一路径）、agent 单层扫描、frontmatter 修补与全局合并/启停/卸载用例，全部 28 个用例通过；`npm run typecheck` 与 `npm run build` 通过。
+
 ## [v0.7.0] - 2026-08-26
 
 ### 新增（控制面板 Skills 管理页签）
