@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### 修复
+
+- 修复版本管理检测进度条永久动画问题（进度条由真实状态 idle → checking → success/error 驱动）
+- 优化右下角控制面板入口视觉样式（去除圆形背景，仅保留图标）
+
+
 ## [v0.5.0] - 2026-08-25
 
 ### 新增（插件安装来源模型 + dsh Harness profile 原生安装通道）
