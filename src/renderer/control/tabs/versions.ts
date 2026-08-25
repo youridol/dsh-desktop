@@ -1,7 +1,18 @@
 /**
  * 版本管理：检查 GitHub Releases、下载并切换（npm 安装）、回退与删除。
+ * 进度条由真实检测状态驱动（idle → checking → success/error）：
+ * 只有 checking 状态显示 indeterminate loading；success/error 后动画立即停止。
  */
 import { bridge, h, type InstalledVersion, type ReleaseInfo, type CommitInfo } from '../api'
+import {
+  beginVersionCheck,
+  beginInstall,
+  succeedVersionCheck,
+  failVersionCheck,
+  resetVersionCheck,
+  shouldAnimate,
+  type VersionCheckUiState,
+} from '../version-check-state'
 
 let pane: HTMLElement
 let installedList: HTMLElement
@@ -9,6 +20,7 @@ let releasesList: HTMLElement
 let checkBtn: HTMLButtonElement
 let progressWrap: HTMLElement
 let progressText: HTMLElement
+let hideTimer: number | null = null
 
 export function initVersions(paneEl: HTMLElement, toast: (msg: string, err?: boolean) => void): void {
   pane = paneEl
@@ -38,11 +50,23 @@ export function initVersions(paneEl: HTMLElement, toast: (msg: string, err?: boo
     document.createTextNode('版本源自 deepseek-ai/deepseek-harness 的 GitHub Releases；安装包经 npm registry 下载并解压到运行目录。')))
 
   pane.append(installedCard, releaseCard)
+  setCheckState(resetVersionCheck())
   void renderInstalled()
   bridge().on('install:progress', (payload) => {
     const p = payload as { version: string; text: string }
     progressText.textContent = `[${p.version}] ${p.text.slice(0, 160)}`
   })
+}
+
+/** 进度条由真实状态驱动：idle 隐藏，checking 显示 loading，success/error 停止动画并保留文案。 */
+function setCheckState(next: VersionCheckUiState): void {
+  if (hideTimer !== null) {
+    window.clearTimeout(hideTimer)
+    hideTimer = null
+  }
+  progressText.textContent = next.message
+  progressWrap.classList.toggle('hidden', next.status === 'idle')
+  progressWrap.classList.toggle('loading', shouldAnimate(next.status))
 }
 
 async function renderInstalled(): Promise<void> {
@@ -83,13 +107,17 @@ function renderInstalledItem(v: InstalledVersion): HTMLElement {
 }
 
 async function check(toast: (msg: string, err?: boolean) => void): Promise<void> {
+  // 检测期间禁用按钮（单飞请求），避免旧请求覆盖新请求。
   checkBtn.disabled = true
   checkBtn.textContent = '正在检查…'
+  const input = document.querySelector('input[name="source"]:checked') as HTMLInputElement | null
+  const source = (input?.value === 'commit' ? 'commit' : 'release') as 'release' | 'commit'
+  setCheckState(beginVersionCheck(source))
   try {
-    const source = (document.querySelector('input[name="source"]:checked') as HTMLInputElement | null)?.value ?? 'release'
-    const result = await bridge().checkUpdates(source as 'release' | 'commit')
+    const result = await bridge().checkUpdates(source)
     releasesList.innerHTML = ''
     if (result.rateLimited) {
+      setCheckState(failVersionCheck('GitHub 限流（403），检查未完成'))
       releasesList.append(h('div', { style: 'display:flex;align-items:center;gap:10px;margin:8px 0' },
         h('span', { class: 'badge warn' }, document.createTextNode('GitHub 限流（403）')),
         document.createTextNode('请在 设置 → GitHub 凭据 配置 Token 提升速率上限，或稍后重试；本地版本切换不受影响。'),
@@ -101,28 +129,34 @@ async function check(toast: (msg: string, err?: boolean) => void): Promise<void>
       return
     }
     if (result.offline) {
+      setCheckState(failVersionCheck('无法连接 GitHub（离线）'))
       releasesList.append(h('p', { class: 'muted' },
         h('span', { class: 'badge warn' }, document.createTextNode('离线')),
         document.createTextNode(' 无法连接 GitHub，本地版本切换不受影响')))
       return
     }
     if (result.latestCommit) {
+      setCheckState(succeedVersionCheck(`检查完成：最新提交 ${result.latestCommit.shortSha}`))
       releasesList.append(renderCommit(result.latestCommit))
       return
     }
     if (result.hasUpdate && result.latest) {
+      setCheckState(succeedVersionCheck(`检查完成：发现新版本 ${result.latest.version}（当前 ${result.current}）`))
       releasesList.append(h('p', { class: 'muted' },
         h('span', { class: 'badge warn' }, document.createTextNode('有新版本')),
         document.createTextNode(` 最新 ${result.latest.version}，当前 ${result.current}`)))
     } else {
+      setCheckState(succeedVersionCheck(`检查完成：已是最新（当前 ${result.current}）`))
       releasesList.append(h('p', { class: 'muted' },
         h('span', { class: 'badge ok' }, document.createTextNode('已是最新')),
         document.createTextNode(` 当前 ${result.current}`)))
     }
     for (const r of result.releases.slice(0, 12)) releasesList.append(renderRelease(r))
   } catch (err) {
+    setCheckState(failVersionCheck(`检查失败：${String(err)}`))
     toast(`检查更新失败：${String(err)}（离线或限流时仍可切换本地版本）`, true)
   } finally {
+    // 检测结束（无论 success/error）恢复按钮，允许再次检测。
     checkBtn.disabled = false
     checkBtn.textContent = '检查更新（GitHub Releases）'
   }
@@ -146,16 +180,15 @@ function renderRelease(r: ReleaseInfo): HTMLElement {
 }
 
 async function downloadAndSwitch(r: ReleaseInfo): Promise<void> {
-  progressWrap.classList.remove('hidden')
-  progressText.textContent = `[${r.version}] 开始下载安装…`
+  setCheckState(beginInstall(`[${r.version}] 开始下载安装…`))
   try {
     await bridge().downloadVersion(r.version)
     await renderInstalled()
-    progressText.textContent = `[${r.version}] 安装完成并已切换`
+    setCheckState(succeedVersionCheck(`[${r.version}] 安装完成并已切换`))
   } catch (err) {
-    progressText.textContent = `[${r.version}] 失败: ${String(err).slice(0, 200)}`
+    setCheckState(failVersionCheck(`[${r.version}] 失败: ${String(err).slice(0, 200)}`))
   } finally {
-    setTimeout(() => progressWrap.classList.add('hidden'), 4000)
+    hideTimer = window.setTimeout(() => progressWrap.classList.add('hidden'), 4000)
   }
 }
 
@@ -203,15 +236,14 @@ function renderCommit(c: CommitInfo): HTMLElement {
 }
 
 async function downloadCommit(c: CommitInfo): Promise<void> {
-  progressWrap.classList.remove('hidden')
-  progressText.textContent = `[${c.shortSha}] 开始下载源码并安装…`
+  setCheckState(beginInstall(`[${c.shortSha}] 开始下载源码并安装…`))
   try {
     await bridge().installCommit(c.sha)
     await renderInstalled()
-    progressText.textContent = `[src-${c.shortSha}] 安装完成并已切换`
+    setCheckState(succeedVersionCheck(`[src-${c.shortSha}] 安装完成并已切换`))
   } catch (err) {
-    progressText.textContent = `[src-${c.shortSha}] 失败: ${String(err).slice(0, 200)}`
+    setCheckState(failVersionCheck(`[src-${c.shortSha}] 失败: ${String(err).slice(0, 200)}`))
   } finally {
-    setTimeout(() => progressWrap.classList.add('hidden'), 4000)
+    hideTimer = window.setTimeout(() => progressWrap.classList.add('hidden'), 4000)
   }
 }
