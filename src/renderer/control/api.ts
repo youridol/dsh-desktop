@@ -3,6 +3,8 @@
  * Renderers are framework-free: each tab module exports render()/init().
  */
 
+export type PluginInstallSource = 'npm' | 'npx' | 'dsh-profile'
+
 export interface PluginView {
   id: string
   packageName: string
@@ -10,7 +12,12 @@ export interface PluginView {
   enabled: boolean
   isBundle: boolean
   description: string | null
-  source: 'npm' | 'local' | 'unknown'
+  /** 安装来源：npm / npx / dsh Harness（旧数据回退 dsh-profile）。 */
+  source: PluginInstallSource
+  /** 安装到的 profile（旧数据回退 web）。 */
+  profile: string
+  /** 安装时间（旧数据为 null）。 */
+  installedAt: number | null
   installDir: string | null
   error?: string
 }
@@ -92,7 +99,7 @@ interface Bridge {
   restart: () => Promise<void>
 
   listPlugins: () => Promise<PluginListResult>
-  addPlugin: (name: string) => Promise<PluginView[]>
+  addPlugin: (options: { name: string; source: PluginInstallSource; profile?: string }) => Promise<PluginView[]>
   removePlugin: (id: string) => Promise<PluginListResult>
   enablePlugin: (id: string) => Promise<PluginListResult>
   disablePlugin: (id: string) => Promise<PluginListResult>

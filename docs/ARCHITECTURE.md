@@ -78,7 +78,7 @@ flowchart TB
 | 版本安装 | npm 版本安装（内置 npm CLI）；源码 commit 安装（codeload 下载 → pnpm install/build → 布局 junction）；捆绑运行时首次解包（`System32\tar.exe`）；junction 安全删除 | `src/main/dsh/install.ts` |
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
-| 插件管理 | dsh harness Web profile 的桌面端管理：`dsh plugin --profile web` CLI 调用（安装 / 卸载）+ profile manifest 读写（列表 / 启用 / 禁用）+ 导出 | `src/main/services/dsh/DshPluginService.ts` |
+| 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh Harness 由 `DshPluginInstaller.ts` 策略层分发）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出 | `src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |

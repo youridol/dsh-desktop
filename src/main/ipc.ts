@@ -9,6 +9,7 @@ import { logEvents, recentLogs, clearLogs } from './logger'
 import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
+import type { InstallPluginOptions } from './services/dsh/DshPluginService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
 import { ballClicked, dragBallBy } from './windows/floating'
@@ -65,8 +66,8 @@ export function registerIpc(): void {
 
   // ---- plugins (dsh profile-based) ----
   ipcMain.handle('plugins:list', () => dshPlugin.listPlugins())
-  ipcMain.handle('plugins:add', async (_e, name: string) => {
-    return dshPlugin.addPlugin(name)
+  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions) => {
+    return dshPlugin.installPlugin(options)
   })
   ipcMain.handle('plugins:remove', async (_e, id: string) => {
     await dshPlugin.removePlugin(id)

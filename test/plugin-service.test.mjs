@@ -19,7 +19,8 @@ const outfile = path.join(here, '.plugin-service.test.cjs')
 await build({
   stdin: {
     contents: `
-      export { listPlugins, enablePlugin, disablePlugin, exportPluginInfo, addPlugin, removePlugin, uninstallPlugin } from './src/main/services/dsh/DshPluginService'
+      export { listPlugins, enablePlugin, disablePlugin, exportPluginInfo, addPlugin, removePlugin, uninstallPlugin, installPlugin, validatePluginName } from './src/main/services/dsh/DshPluginService'
+      export { runInstall, validateProfile, DEFAULT_PROFILE } from './src/main/services/dsh/DshPluginInstaller'
       export { execDsh } from './src/main/services/dsh/DshCommandExecutor'
     `,
     resolveDir: root,
@@ -39,6 +40,12 @@ const {
   enablePlugin,
   disablePlugin,
   exportPluginInfo,
+  installPlugin,
+  runInstall,
+  validateProfile,
+  validatePluginName,
+  DEFAULT_PROFILE,
+  execDsh,
 } = await import(pathToFileURL(outfile).href)
 
 // ---- test helpers ----
@@ -256,3 +263,169 @@ test('listPlugins: missing profile file returns empty', () => {
   const result = listPlugins()
   assert.equal(result.plugins.length, 0)
 })
+
+// ---- install source model & install channel ---- //
+
+/** Fake executor capturing the forwarded dsh args. On success it also
+ * records the plugin into the (temp) profile manifest so listPlugins picks it
+ * up, mirroring what a real pnpm add into node_modules + manifest would do. */
+function fakeExecutor() {
+  const calls = []
+  const executor = async (args, options) => {
+    calls.push({ args, options })
+    // args: ['plugin','--profile',profile,'add',name]
+    const name = args[args.length - 1]
+    const manifest = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
+    if (!manifest.dependencies) manifest.dependencies = {}
+    manifest.dependencies[name] = '^1.0.0'
+    fs.writeFileSync(path.join(tmpProfileDir, 'package.json'), JSON.stringify(manifest, undefined, 2) + '\n', 'utf8')
+    fs.mkdirSync(path.join(tmpProfileDir, 'node_modules', name), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpProfileDir, 'node_modules', name, 'package.json'),
+      JSON.stringify({ name, version: '1.0.0', dsh: { bundle: {} } }, undefined, 2) + '\n',
+      'utf8',
+    )
+    return { ok: true, exitCode: 0, stdout: 'installed', stderr: '', timedOut: false }
+  }
+  executor.calls = calls
+  return executor
+}
+
+test('installer strategy: source=npm forwards dsh plugin --profile web add <name>', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = fakeExecutor()
+  const [p] = await installPlugin({ name: 'dshmarket', source: 'npm' }, exec)
+  assert.equal(exec.calls.length, 1)
+  assert.deepEqual(exec.calls[0].args, ['plugin', '--profile', 'web', 'add', 'dshmarket'])
+  assert.equal(p.packageName, 'dshmarket')
+  assert.equal(p.source, 'npm')
+  assert.equal(p.profile, 'web')
+})
+
+test('installer strategy: source=npx uses the npx channel label', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = fakeExecutor()
+  const [p] = await installPlugin({ name: 'dshmarket', source: 'npx' }, exec)
+  assert.equal(exec.calls.length, 1)
+  assert.deepEqual(exec.calls[0].args, ['plugin', '--profile', 'web', 'add', 'dshmarket'])
+  assert.equal(p.source, 'npx')
+})
+
+test('installer strategy: source=dsh-profile requires a profile and builds the profile command', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = fakeExecutor()
+  const [p] = await installPlugin({ name: 'dshmarket', source: 'dsh-profile', profile: 'web' }, exec)
+  assert.equal(exec.calls.length, 1)
+  // dsh plugin --profile web add dshmarket — the requested native channel
+  assert.deepEqual(exec.calls[0].args, ['plugin', '--profile', 'web', 'add', 'dshmarket'])
+  assert.equal(p.source, 'dsh-profile')
+  assert.equal(p.profile, 'web')
+})
+
+test('installer: unknown source is rejected explicitly', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  await assert.rejects(
+    () => installPlugin({ name: 'x', source: 'git' }, fakeExecutor()),
+    (err) => err.code === 'INVALID_REQUEST' && /未知安装来源/.test(err.message),
+  )
+})
+
+// ---- validation ---- //
+
+test('validation: dsh-profile without profile fails before any exec', async () => {
+  const exec = fakeExecutor()
+  await assert.rejects(
+    () => installPlugin({ name: 'dshmarket', source: 'dsh-profile' }, exec),
+    (err) => err.code === 'INVALID_REQUEST' && /Profile/.test(err.message),
+  )
+  assert.equal(exec.calls.length, 0)
+})
+
+test('validation: empty plugin name fails', async () => {
+  await assert.rejects(
+    () => runInstall({ name: '  ', source: 'npm' }, validatePluginName, fakeExecutor()),
+    (err) => err.code === 'INVALID_REQUEST' && /插件名称不能为空/.test(err.message),
+  )
+})
+
+test('validation: profile names with shell metacharacters are rejected', () => {
+  assert.equal(validateProfile('web'), null)
+  assert.equal(validateProfile(''), 'Profile 不能为空')
+  assert.equal(validateProfile('web;rm'), 'Profile 名称非法（仅允许字母、数字、连字符、下划线）')
+  assert.equal(validateProfile('../etc'), 'Profile 名称非法（仅允许字母、数字、连字符、下划线）')
+})
+
+// ---- execution failures ---- //
+
+test('exec: dsh CLI unavailable returns a clear user-facing error', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = async () => ({
+    ok: false, exitCode: null, stdout: '', stderr: '',
+    timedOut: false, error: 'dsh runtime not found',
+  })
+  await assert.rejects(
+    () => installPlugin({ name: 'dshmarket', source: 'dsh-profile', profile: 'web' }, exec),
+    (err) =>
+      err.code === 'EXEC_FAILED' &&
+      /未检测到可用的 dsh CLI/.test(err.message) &&
+      /DeepSeek Harness/.test(err.message),
+  )
+})
+
+test('exec: non-zero exit reports failure and writes no success record', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = async () => ({
+    ok: false, exitCode: 1, stdout: '', stderr: 'pnpm failed',
+    timedOut: false, error: 'exit 1',
+  })
+  await assert.rejects(() => installPlugin({ name: 'dshmarket', source: 'npm' }, exec))
+  const raw = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
+  // No metadata record written for a failed install
+  assert.equal(raw.dsh?.desktop?.plugins?.['dshmarket'], undefined)
+})
+
+// ---- success record persistence ---- //
+
+test('successful install persists source+profile+installedAt metadata', async () => {
+  writeManifest({
+    name: 'dsh-profile-web',
+    private: true,
+    dependencies: { dshmarket: '^1.0.0' },
+    dsh: { profile: { bundles: ['dshmarket'] } },
+  })
+  writePackageMeta('dshmarket', { name: 'dshmarket', version: '1.0.0', dsh: { bundle: {} } })
+  const exec = fakeExecutor()
+  const [p] = await installPlugin({ name: 'dshmarket', source: 'dsh-profile', profile: 'web' }, exec)
+
+  const raw = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
+  const rec = raw.dsh?.desktop?.plugins?.['dshmarket']
+  assert.ok(rec, 'install record must be written')
+  assert.equal(rec.source, 'dsh-profile')
+  assert.equal(rec.profile, 'web')
+  assert.ok(Number.isInteger(rec.installedAt))
+  assert.equal(p.source, 'dsh-profile')
+  assert.equal(p.profile, 'web')
+})
+
+// ---- legacy data compatibility ---- //
+
+test('legacy records without source/profile keep working and fall back', () => {
+  // Old data: manifest has dependencies but no dsh.desktop metadata
+  writeManifest({
+    name: 'dsh-profile-web',
+    private: true,
+    dependencies: { 'old-plugin': '^0.1.0' },
+    dsh: { profile: { bundles: ['old-plugin'] } },
+  })
+  writePackageMeta('old-plugin', { name: 'old-plugin', version: '0.1.0', dsh: { bundle: {} } })
+
+  const result = listPlugins()
+  assert.equal(result.plugins.length, 1)
+  const p = result.plugins[0]
+  // Fallbacks: no crash, source defaults to the dsh profile channel, profile web
+  assert.equal(p.id, 'old-plugin')
+  assert.equal(p.source, 'dsh-profile')
+  assert.equal(p.profile, DEFAULT_PROFILE)
+  assert.equal(p.installedAt, null)
+})
+

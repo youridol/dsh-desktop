@@ -11,7 +11,8 @@ const api = {
   restart: () => ipcRenderer.invoke('app:restart'),
 
   listPlugins: () => ipcRenderer.invoke('plugins:list'),
-  addPlugin: (name: string) => ipcRenderer.invoke('plugins:add', name),
+  addPlugin: (options: { name: string; source: 'npm' | 'npx' | 'dsh-profile'; profile?: string }) =>
+    ipcRenderer.invoke('plugins:add', options),
   removePlugin: (id: string) => ipcRenderer.invoke('plugins:remove', id),
   enablePlugin: (id: string) => ipcRenderer.invoke('plugins:enable', id),
   disablePlugin: (id: string) => ipcRenderer.invoke('plugins:disable', id),

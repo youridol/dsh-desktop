@@ -1,13 +1,22 @@
 /**
- * 插件管理：通过 dsh plugin --profile web CLI 安装/卸载/启用/禁用/导出。
+ * 插件管理：通过 dsh plugin --profile <profile> CLI 安装/卸载/启用/禁用/导出。
+ * 安装来源（npm / npx / dsh Harness）在选择时确定；dsh Harness 需额外指定 Profile。
  */
-import { bridge, h, type PluginView, type PluginListResult } from '../api'
+import { bridge, h, type PluginView, type PluginListResult, type PluginInstallSource } from '../api'
 
 let pane: HTMLElement
 let nameInput: HTMLInputElement
+let profileRow: HTMLElement
+let profileInput: HTMLInputElement
+let sourceRadios: HTMLInputElement[]
 let list: HTMLElement
 let applyBtn: HTMLButtonElement
 let toastFn: (msg: string, err?: boolean) => void = () => {}
+
+/** 当前选中的安装来源。 */
+function selectedSource(): PluginInstallSource {
+  return (sourceRadios.find((r) => r.checked)?.value ?? 'npm') as PluginInstallSource
+}
 
 export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: boolean) => void): void {
   pane = paneEl
@@ -17,20 +26,58 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
   const installCard = h('div', { class: 'card' })
   installCard.append(h('h3', {}, document.createTextNode('安装插件（npm 包）')))
 
+  const sourceOptions: Array<{ value: PluginInstallSource; label: string }> = [
+    { value: 'npm', label: 'npm' },
+    { value: 'npx', label: 'npx' },
+    { value: 'dsh-profile', label: 'dsh Harness' },
+  ]
+
+  sourceRadios = sourceOptions.map((opt, i) => {
+    const radio = h('input', { type: 'radio', name: 'install-source', value: opt.value, checked: i === 0 }) as HTMLInputElement
+    return h('label', { class: 'radio' }, radio, document.createTextNode(opt.label)) as unknown as HTMLInputElement
+  })
+
+  const sourceRow = h('div', { class: 'row', style: 'gap:16px' },
+    h('span', { class: 'muted' }, document.createTextNode('安装方式：')),
+    ...sourceRadios,
+  )
+
   nameInput = h('input', {
     type: 'text',
-    placeholder: 'npm 包名，如 @scope/dsh-plugin-example',
-    style: 'width:320px',
+    placeholder: '插件名称，如 dshmarket 或 @scope/plugin',
+    style: 'width:280px',
   }) as HTMLInputElement
+
+  profileInput = h('input', {
+    type: 'text',
+    placeholder: 'Profile 名称，如 web',
+    style: 'width:120px',
+  }) as HTMLInputElement
+
+  profileRow = h('div', { class: 'row', style: 'gap:8px' },
+    h('span', { class: 'muted' }, document.createTextNode('Profile：')),
+    profileInput,
+  )
+
+  // 仅 dsh Harness 需要 Profile
+  const toggleProfileRow = () => {
+    profileRow.style.display = selectedSource() === 'dsh-profile' ? '' : 'none'
+  }
+  for (const r of sourceRadios) r.addEventListener('change', toggleProfileRow)
+  toggleProfileRow()
+  profileInput.value = profileInput.value || 'web'
 
   const addBtn = h('button', {
     class: 'btn primary',
     onclick: () => void installPlugin(toast),
   }, document.createTextNode('安装'))
 
-  installCard.append(h('div', { class: 'row', style: 'gap:8px' }, nameInput, addBtn))
+  installCard.append(
+    sourceRow,
+    h('div', { class: 'row', style: 'gap:8px;margin-top:8px' }, nameInput, profileRow, addBtn),
+  )
   const hint = h('p', { class: 'muted' },
-    document.createTextNode('通过 dsh plugin --profile web add 安装 npm/npx 插件。需要 pnpm。'))
+    document.createTextNode('通过 dsh plugin --profile <profile> add 安装 npm/npx 插件。dsh Harness 安装可指定任意 Profile。需要 pnpm。'))
   installCard.append(hint)
 
   const listCard = h('div', { class: 'card' })
@@ -72,7 +119,7 @@ function renderList(result: PluginListResult): void {
 
   if (plugins.length === 0) {
     list.append(h('p', { class: 'empty' },
-      document.createTextNode(`暂无插件。通过上方输入框安装，或运行 dsh plugin --profile web add <包名>。`)))
+      document.createTextNode('暂无插件。通过上方输入框选择安装方式安装，或运行 dsh plugin --profile web add <包名>。')))
     return
   }
 
@@ -81,6 +128,13 @@ function renderList(result: PluginListResult): void {
   list.append(countHint)
 
   for (const p of plugins) list.append(renderItem(p))
+}
+
+/** 来源徽章文案与样式。 */
+function sourceBadge(p: PluginView): HTMLElement {
+  const label = p.source === 'dsh-profile' ? 'dsh Harness' : p.source
+  const cls = p.source === 'dsh-profile' ? 'accent' : p.source === 'npx' ? 'warn' : 'ok'
+  return h('span', { class: `badge ${cls}`, style: 'margin-left:8px' }, document.createTextNode(label))
 }
 
 function renderItem(p: PluginView): HTMLElement {
@@ -103,7 +157,7 @@ function renderItem(p: PluginView): HTMLElement {
   const metaParts = [
     p.version ? `v${p.version}` : '',
     p.isBundle ? '插件层' : '普通依赖',
-    p.source === 'npm' ? 'npm' : p.source,
+    `Profile：${p.profile}`,
     p.description ?? '',
   ].filter(Boolean).join(' · ')
 
@@ -117,12 +171,13 @@ function renderItem(p: PluginView): HTMLElement {
   if (!p.enabled) {
     badges.push(h('span', { class: 'badge muted', style: 'margin-left:8px' }, document.createTextNode('已停用')))
   }
+  badges.push(sourceBadge(p))
 
   const removeBtn = h('button', {
     class: 'btn danger small',
     style: 'margin-right:4px',
     onclick: async () => {
-      if (!confirm(`确定卸载插件 ${p.id}？此操作将执行 pnpm remove。`)) return
+      if (!confirm(`确定卸载插件 ${p.id}？（来源：${p.source === 'dsh-profile' ? 'dsh Harness' : p.source}，Profile：${p.profile}）`)) return
       try {
         await bridge().uninstallPlugin(p.id)
         toastFn(`已卸载 ${p.id}`)
@@ -167,14 +222,29 @@ function renderItem(p: PluginView): HTMLElement {
 
 async function installPlugin(toast: (msg: string, err?: boolean) => void): Promise<void> {
   const name = nameInput.value.trim()
+  const source = selectedSource()
+  const profile = profileInput.value.trim()
+
   if (!name) {
-    toast('请输入 npm 包名', true)
+    toast('请输入插件名称', true)
     return
   }
+  if (source === 'dsh-profile' && !profile) {
+    toast('dsh Harness 安装必须填写 Profile', true)
+    return
+  }
+
+  const opts: { name: string; source: PluginInstallSource; profile?: string } =
+    source === 'dsh-profile' ? { name, source, profile } : { name, source }
+
   nameInput.disabled = true
   try {
-    await bridge().addPlugin(name)
-    toast(`已安装插件 ${name}，点击“应用并重启 DSH”生效`)
+    const installed = await bridge().addPlugin(opts)
+    if (installed.length === 0) {
+      toast(`安装完成，但列表未显示 ${name}（可能安装到了其他 Profile），请检查`, true)
+      return
+    }
+    toast(`已安装插件 ${name}（${sourceLabel(source)}${source === 'dsh-profile' ? ` · Profile：${profile}` : ''}），点击“应用并重启 DSH”生效`)
     nameInput.value = ''
     await refresh()
   } catch (err) {
@@ -182,6 +252,10 @@ async function installPlugin(toast: (msg: string, err?: boolean) => void): Promi
   } finally {
     nameInput.disabled = false
   }
+}
+
+function sourceLabel(source: PluginInstallSource): string {
+  return source === 'dsh-profile' ? 'dsh Harness' : source
 }
 
 async function applyAndRestart(toast: (msg: string, err?: boolean) => void): Promise<void> {

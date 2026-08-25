@@ -145,6 +145,9 @@ label.switch .track::after {
 label.switch input:checked + .track { background: var(--accent); }
 label.switch input:checked + .track::after { transform: translateX(15px); background: #fff; }
 
+label.radio { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px; }
+label.radio input { accent-color: var(--accent); }
+
 .badge {
   display: inline-block;
   padding: 1px 8px;
