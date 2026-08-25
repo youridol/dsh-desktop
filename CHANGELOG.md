@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.5.0] - 2026-08-25
+
+### 新增（插件安装来源模型 + dsh Harness profile 原生安装通道）
+
+插件安装不再只有隐性来源：dsh-desktop 引入显式安装来源模型 npm / npx / dsh Harness（dsh-profile），安装来源与安装到的 Profile 作为插件元数据持久化到 profile manifest，列表展示、卸载/启停按来源与 Profile 路由，为未来 git / url / local / marketplace 等新通道预留策略扩展点。
+
+- **新增 `src/main/services/dsh/DshPluginInstaller.ts`**（安装策略层）：`runInstall(options)` 按显式 `source` 分发到 NpmPluginInstaller / NpxPluginInstaller / DshProfilePluginInstaller，参数数组构建（严禁 shell 拼接），`dsh plugin --profile <profile> add <plugin>` 为 dsh Harness 原生通道；校验前置（未知来源、插件名非法、dsh-profile 缺 profile）以结构化 `PluginInstallError(code/message/cause)` 返回，失败不写任何成功记录。
+- **来源模型与元数据**（`src/main/services/dsh/DshPluginService.ts`）：`PluginView` 新增 `source`（npm / npx / dsh-profile）、`profile`、`installedAt`；安装记录写入 manifest 的 `dsh.desktop.plugins`（与 dsh 自身 `dsh.profile.bundles` 隔离）；`installPlugin(options)` 成功即持久化 source+profile+installedAt 并刷新列表；卸载/启停经记录中的 Profile 路由（`dsh plugin --profile <profile> remove <name>`，命令已由 dsh CLI 源码确认为 pnpm remove 转发）；旧数据无 source/profile 时回退 `dsh-profile`/`web`，列表、卸载、启停均不受影响。
+- **UI 改造**（`src/renderer/control/tabs/plugins.ts`）：安装卡新增「安装方式」单选（npm / npx / dsh Harness），选 dsh Harness 时显示 Profile 输入框（默认 web），无需手填 CLI 命令；插件列表以徽标展示来源（「dsh Harness」accent / 「npm」ok / 「npx」warn）并显示 Profile；卸载确认提示来源与 Profile。
+- **IPC / 桥接**：`plugins:add` 由裸 name 改为 `{ name, source, profile? }` 选项对象（`src/main/ipc.ts`、`src/preload/control.ts`、`src/renderer/control/api.ts`），`addPlugin(name)` 保留为兼容包装。
+- **测试**（`test/plugin-service.test.mjs` 增加 13 用例）：三种来源策略选择与命令参数断言（`dsh plugin --profile web add dshmarket` 精确匹配）、dsh-profile 缺 profile / 插件名空白 / profile 含 shell 元字符的校验、未知来源显式拒绝、dsh CLI 缺失的明确错误（含「DeepSeek Harness」提示文案）、非零退出不写成功记录、成功安装持久化 source+profile+installedAt、旧数据无 source/profile 的兼容回退。全量 27 用例通过。
+- **文档**：README.md 新增「插件安装来源」章节说明三种方式区别、Profile 作用、UI 操作与 dsh CLI 缺失处理；docs/ARCHITECTURE.md 模块表补充安装策略层与元数据说明。
 ## [v0.4.0] - 2026-08-25
 
 ### 重构（插件管理迁移到 dsh harness 上游插件机制）
