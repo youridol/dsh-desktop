@@ -1,3 +1,9 @@
+/**
+ * Floating ball: transparent window; the ball container itself has no visual
+ * background (no circle fill / border / shadow). The icon alone is visible.
+ * The 56x56 container still provides the drag / click hit area.
+ */
+
 html, body {
   margin: 0;
   width: 100%;
@@ -11,25 +17,21 @@ html, body {
   position: relative;
   width: 100%;
   height: 100%;
-  border-radius: 50%;
-  background: rgba(18, 22, 28, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: grab;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: filter 0.15s ease, transform 0.15s ease;
 }
 
+/* Hover 只做轻微反馈，不产生圆形实体背景。 */
 #ball:hover {
-  transform: scale(1.08);
-  box-shadow: 0 6px 22px rgba(77, 107, 254, 0.55);
+  filter: brightness(1.12);
 }
 
 #ball.dragging {
   cursor: grabbing;
-  transform: scale(1.12);
+  transform: scale(1.08);
 }
 
 #ball img {
@@ -45,6 +47,6 @@ html, body {
   bottom: 1px;
   font-size: 13px;
   color: #9fb4ff;
-  text-shadow: 0 1px 2px #000;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   pointer-events: none;
 }
