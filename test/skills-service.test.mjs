@@ -554,6 +554,84 @@ Body`, 'utf8')
   assert.ok(!fs.existsSync(dir))
   assert.equal(lc.listInstalled('global').length, 0)
 })
+
+test('lifecycle: project list merges pre-existing agent skills from disk', () => {
+  const root = tmpDir('dsh-skills-project-agent-merge-')
+  const dir = path.join(root, 'project', 'my-project-agent')
+  fs.mkdirSync(path.join(dir, 'references'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), `---
+name: my-project-agent
+description: Project agent
+---
+Body`, 'utf8')
+  fs.writeFileSync(path.join(dir, 'references', 'note.md'), 'r', 'utf8')
+  const lc = makeLifecycle(root)
+  const list = lc.listInstalled('project')
+  const entry = list.find((s) => s.key === 'agents:my-project-agent')
+  assert.ok(entry, 'pre-existing project agent is visible in project list')
+  assert.equal(entry.scope, 'project')
+  assert.equal(entry.repoId, 'agents')
+  assert.equal(entry.enabled, true)
+  assert.deepEqual(entry.files.sort(), ['SKILL.md', 'references/note.md'].sort())
+  assert.ok(lc.listInstalled().some((s) => s.key === 'agents:my-project-agent'))
+})
+
+test('lifecycle: project agent enable/disable writes policy and persists', () => {
+  const root = tmpDir('dsh-skills-project-agent-policy-')
+  const dir = path.join(root, 'project', 'my-project-agent')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), `---
+name: my-project-agent
+description: Project agent
+---
+Body`, 'utf8')
+  const lc = makeLifecycle(root)
+  const key = 'agents:my-project-agent'
+  lc.setEnabled('project', key, false)
+  let md = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+  assert.ok(md.includes('disable-model-invocation: true'))
+  assert.ok(md.includes('user-invocable: false'))
+  assert.equal(lc.getSkill('project', key)?.enabled, false)
+  lc.setEnabled('project', key, true)
+  md = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+  assert.ok(!md.includes('disable-model-invocation'))
+  assert.ok(!md.includes('user-invocable'))
+  assert.equal(lc.getSkill('project', key)?.enabled, true)
+})
+
+test('lifecycle: uninstall removes pure-disk project agent skill not in manifest', () => {
+  const root = tmpDir('dsh-skills-project-agent-uninstall-')
+  const dir = path.join(root, 'project', 'my-project-agent')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), `---
+name: my-project-agent
+description: Project agent
+---
+Body`, 'utf8')
+  const lc = makeLifecycle(root)
+  lc.uninstallSkill('project', 'agents:my-project-agent')
+  assert.ok(!fs.existsSync(dir))
+  assert.equal(lc.listInstalled('project').length, 0)
+})
+
+test('lifecycle: project flat md agent is discovered and manageable', () => {
+  const root = tmpDir('dsh-skills-project-agent-flat-')
+  const file = path.join(root, 'project', 'flat-agent.md')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, `---
+name: flat-agent
+description: Flat project agent
+---
+Body`, 'utf8')
+  const lc = makeLifecycle(root)
+  const key = 'agents:flat-agent.md'
+  assert.ok(lc.listInstalled('project').some((s) => s.key === key && s.path === 'flat-agent.md'))
+  lc.setEnabled('project', key, false)
+  let md = fs.readFileSync(file, 'utf8')
+  assert.ok(md.includes('disable-model-invocation: true'))
+  lc.uninstallSkill('project', key)
+  assert.ok(!fs.existsSync(file))
+})
 // ---- backup / export / import ---- //
 
 test('backup: buildExport payload + validate rejects bad input', () => {

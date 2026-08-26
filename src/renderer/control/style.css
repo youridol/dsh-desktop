@@ -426,6 +426,34 @@ a { color: #9fb4ff; }
   margin-bottom: var(--space-3);
 }
 
+.agent-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+.agent-col {
+  min-width: 0;
+}
+.agent-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.agent-col-title {
+  margin: 0;
+  font-size: var(--fs);
+  font-weight: 600;
+}
+.agent-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- repo / skill details ---- */
 .repo-detail, .skill-detail, .repo-edit {
   width: 100%;

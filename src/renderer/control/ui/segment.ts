@@ -15,15 +15,18 @@ export function segmented<T extends string>(
   onChange: (value: T) => void,
 ): HTMLElement {
   const root = h('div', { class: 'seg-group', role: 'tablist' })
+  // 用可变 current 记录实际选中值，避免点击回调持有渲染时的旧闭包。
+  let current = value
   for (const opt of options) {
     root.append(h('button', {
-      class: ['seg', opt.value === value ? 'active' : ''].filter(Boolean).join(' '),
+      class: ['seg', opt.value === current ? 'active' : ''].filter(Boolean).join(' '),
       'data-value': opt.value,
       role: 'tab',
-      'aria-selected': String(opt.value === value),
+      'aria-selected': String(opt.value === current),
       type: 'button',
       onclick: () => {
-        if (opt.value === value) return
+        if (opt.value === current) return
+        current = opt.value
         setSegmentedValue(root, opt.value)
         onChange(opt.value)
       },

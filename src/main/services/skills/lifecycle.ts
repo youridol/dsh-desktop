@@ -6,6 +6,7 @@
  * 安装 = 把仓库中发现的技能目录复制到作用域目录并登记清单；
  * 启用/停用改清单；global 作用域额外写 deepseek-harness 前导调用策略（disable-model-invocation /
  * user-invocable），使启停对上游 harness 真实生效；卸载/删除移除文件与登记。
+ * 两个作用域都会把目录中已有的本机 Agent 技能（目录束 / 扁平 md）合并进列表。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -111,23 +112,19 @@ export class SkillsLifecycle {
   }
 
   /**
-   * 列出已安装技能。global 作用域 = 清单 + 磁盘发现合并（deepseek-harness 已有技能可见）。
+   * 列出已安装技能。每个作用域 = 清单 + 磁盘 Agent 发现合并（deepseek-harness 已有技能可见）。
    */
   listInstalled(scope?: SkillScope): InstalledSkill[] {
     const scopes = scope ? [scope] : (['global', 'project'] as const)
     const out: InstalledSkill[] = []
     for (const s of scopes) {
-      out.push(...(s === 'global' ? this.listGlobal() : this.readScope(s).skills.map((x) => ({ ...x, scope: s }))))
+      out.push(...this.listScope(s))
     }
     return out
   }
 
   getSkill(scope: SkillScope, key: string): InstalledSkill | null {
-    if (scope === 'global') {
-      return this.listGlobal().find((s) => s.key === key) ?? null
-    }
-    const found = this.readScope(scope).skills.find((s) => s.key === key)
-    return found ? { ...found, scope } : null
+    return this.listScope(scope).find((s) => s.key === key) ?? null
   }
 
   private repoDirOf(repoId: string): string {
@@ -152,16 +149,16 @@ export class SkillsLifecycle {
   }
 
   /**
-   * global 清单与磁盘合并：已登记且目录仍在的条目保留；目录仍存在但未登记的条目按 agent 技能补入。
+   * 作用域清单与磁盘合并：已登记且目录仍在的条目保留；目录仍存在但未登记的条目按 agent 技能补入。
    * 目录/文件同名时清单条目代表该目录，避免同一技能被计两次。
    */
-  private listGlobal(): InstalledSkill[] {
-    const manifest = this.readScope('global').skills.map((x) => ({ ...x, scope: 'global' as SkillScope }))
-    const disk = discoverAgentSkills(this.globalDir)
+  private listScope(scope: SkillScope): InstalledSkill[] {
+    const manifest = this.readScope(scope).skills.map((x) => ({ ...x, scope }))
+    const disk = discoverAgentSkills(this.scopeDir(scope))
     const diskById = new Map(disk.map((d) => [d.path, d]))
     const out: InstalledSkill[] = []
     for (const m of manifest) {
-      if (!fs.existsSync(this.installedDir('global', m.id))) continue
+      if (!fs.existsSync(this.installedDir(scope, m.id))) continue
       out.push(m)
       diskById.delete(m.id)
     }
@@ -175,7 +172,7 @@ export class SkillsLifecycle {
         repoId: AGENTS_SOURCE_ID,
         repoUrl: '',
         path: id,
-        scope: 'global',
+        scope,
         commit: null,
         installedAt: 0,
         updatedAt: 0,
@@ -303,7 +300,7 @@ export class SkillsLifecycle {
     let skill: InstalledSkill | undefined
     const idx = manifest.skills.findIndex((s) => s.key === key)
     if (idx >= 0) skill = manifest.skills[idx]
-    else if (scope === 'global') skill = this.listGlobal().find((s) => s.key === key)
+    else skill = this.listScope(scope).find((s) => s.key === key)
     if (!skill) throw new Error('技能未安装')
     if (idx >= 0) {
       try {
@@ -327,25 +324,19 @@ export class SkillsLifecycle {
    * 首次切换时把磁盘 agent 技能补进清单。
    */
   setEnabled(scope: SkillScope, key: string, enabled: boolean): InstalledSkill {
-    if (scope === 'global') {
-      const current = this.listGlobal().find((s) => s.key === key)
-      if (!current) throw new Error('技能未安装')
-      const record: InstalledSkill = { ...current, enabled, updatedAt: this.now() }
-      const manifest = this.readScope('global')
-      const idx = manifest.skills.findIndex((s) => s.key === key)
-      if (idx >= 0) manifest.skills[idx] = record
-      else manifest.skills.push(record)
-      this.writeScope('global', manifest)
-      this.writeInvocationPolicy(record, enabled)
-      return record
-    }
+    const current = this.listScope(scope).find((s) => s.key === key)
+    if (!current) throw new Error('技能未安装')
+    const record: InstalledSkill = { ...current, enabled, updatedAt: this.now() }
     const manifest = this.readScope(scope)
     const idx = manifest.skills.findIndex((s) => s.key === key)
-    if (idx < 0) throw new Error('技能未安装')
-    manifest.skills[idx].enabled = enabled
-    manifest.skills[idx].updatedAt = this.now()
+    if (idx >= 0) manifest.skills[idx] = record
+    else manifest.skills.push(record)
     this.writeScope(scope, manifest)
-    return { ...manifest.skills[idx], scope }
+    // global 沿用现有策略写入；project 仅对本地 agent 技能写策略，仓库安装的技能保持原行为。
+    if (scope === 'global' || current.repoId === AGENTS_SOURCE_ID) {
+      this.writeInvocationPolicy(record, enabled)
+    }
+    return record
   }
 
   /**
@@ -356,9 +347,9 @@ export class SkillsLifecycle {
     const flat = skill.repoId === AGENTS_SOURCE_ID && skill.path.endsWith('.md')
     let skillFile: string | null = null
     if (flat) {
-      skillFile = path.join(this.globalDir, ...skill.path.split('/'))
+      skillFile = path.join(this.scopeDir(skill.scope), ...skill.path.split('/'))
     } else {
-      const dir = this.installedDir('global', skill.id)
+      const dir = this.installedDir(skill.scope, skill.id)
       skillFile = ['SKILL.md', 'SKILL.MD', 'skill.md']
         .map((n) => path.join(dir, n))
         .find((p) => {
@@ -382,11 +373,11 @@ export class SkillsLifecycle {
   ): InstalledSkill {
     const id = this.safeId(entry.id) ?? this.dirIdFor(scope, entry.repoId, entry.path, entry.name)
     const key = skillKey(entry.repoId, entry.path)
-    const flat = scope === 'global' && (id.endsWith('.md') || entry.path.endsWith('.md'))
+    const flat = id.endsWith('.md') || entry.path.endsWith('.md')
     const manifest = this.readScope(scope)
     const existing = manifest.skills.find((s) => s.key === key)
     const dirConflict = manifest.skills.find((s) => s.id === id && s.key !== key)
-    const location = flat ? this.globalDir : this.installedDir(scope, id)
+    const location = flat ? this.scopeDir(scope) : this.installedDir(scope, id)
     const dirOccupied = !flat && scope === 'global' && fs.existsSync(location) && !existing
     if (!options.overwrite && (dirConflict || dirOccupied)) {
       throw new Error(`目录冲突：技能 ${dirConflict?.name ?? id} 已占用目录 ${id}，导入时可选择覆盖`)

@@ -12,7 +12,7 @@ export interface PluginView {
   enabled: boolean
   isBundle: boolean
   description: string | null
-  /** 安装来源：npm / npx / dsh Harness（旧数据回退 dsh-profile）。 */
+  /** 安装来源：npm / npx / dsh（旧数据回退 dsh-profile）。 */
   source: PluginInstallSource
   /** 安装到的 profile（旧数据回退 web）。 */
   profile: string

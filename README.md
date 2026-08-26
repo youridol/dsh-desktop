@@ -14,12 +14,13 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 - **Skills 管理**（`src/main/services/skills/` + `src/renderer/control/tabs/skills.ts`）：独立 Skills 页签，全部能力在 dsh-desktop 内自管理，不修改 deepseek-harness 上游源码：
   - 自定义 Skills 仓库（默认示例 `https://github.com/mattpocock/skills`），添加 / 编辑 / 删除 / 启用停用 / 拉取刷新 / 全部同步；
   - 全局作用域 = deepseek-harness 真实 Agents/Skills 目录（`~/.agents/skills`，经 `$DSH_AGENTS_HOME` / 用户 Home 统一解析）：已有 Skills 自动发现并展示，安装按 harness 目录束规范（kebab 名 + SKILL.md 前导），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；单 / 批量启用、停用、卸载、删除；查看技能信息（来源仓库 / 路径 / commit / 状态）；
+  - Agent 管理：全局 / 项目 Agent 目录中的本机技能（目录束 / 扁平 Markdown）自动读取、区分展示，支持刷新、启停与删除，不修改 deepseek-harness 上游源码；
   - 检测上游更新并执行更新同步；GitHub Skills 搜索与一键安装；
   - 导出 / 导入 / 备份 / 恢复，导入时校验格式、版本、路径与冲突（`test/skills-service.test.mjs` 覆盖核心逻辑）。
-- **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh Harness）与 Profile 作为元数据写入 manifest 并展示在列表中：
-  - 安装方式可选 npm / npx / dsh Harness：npm 与 npx 默认安装到 `web` profile，dsh Harness 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），不自行 git clone / npm install / 下载 tarball；
+- **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh）与 Profile 作为元数据写入 manifest 并展示在列表中：
+  - 安装方式可选 npm / npx / dsh：npm 与 npx 默认安装到 `web` profile，dsh 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），不自行 git clone / npm install / 下载 tarball；
   - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
-  - 来源识别：插件列表用标签展示「来源：npm / npx / dsh Harness」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
+  - 来源识别：插件列表用标签展示「来源：npm / npx / dsh」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。
 - **日志与状态**（`src/main/logger.ts` + `src/renderer/control/tabs/status.ts`）：DSH 进程状态、端口、PID、实时日志滚动（应用 / DSH / 安装三类来源，镜像到运行目录 `logs/main.log`）。
 - **设置**（`src/renderer/control/tabs/settings.ts`）：DSH 端口（修改后重启生效）、开机自启、启动时检查更新、GitHub 凭据（用于版本的 Releases 查询限流提升）。
@@ -45,11 +46,11 @@ dsh plugin --profile web add dshmarket
 | --- | --- | --- |
 | `npm` | 以 npm 包形式安装为 profile 依赖（默认 `web` profile） | `dsh plugin --profile web add <包名>` |
 | `npx` | 以 npx 工具包形式安装（CLI 类工具，同样为 npm 包） | `dsh plugin --profile web add <包名>` |
-| `dsh Harness` | dsh 原生 Profile 安装，需指定 Profile | `dsh plugin --profile <profile> add <包名>` |
+| `dsh` | dsh 原生 Profile 安装，需指定 Profile | `dsh plugin --profile <profile> add <包名>` |
 
-安装后元数据（来源 + Profile + 安装时间）写入 profile manifest 的 `dsh.desktop.plugins`；插件列表以标签展示「来源：npm / npx / dsh Harness」与「Profile：<名称>」。卸载按记录中的 Profile 路由到对应 `dsh plugin --profile <profile> remove`，启用 / 禁用同样作用于记录中的 Profile。旧版本已安装的插件没有来源记录，默认按 `dsh Harness` / `web` 兼容显示与操作。
+安装后元数据（来源 + Profile + 安装时间）写入 profile manifest 的 `dsh.desktop.plugins`；插件列表以标签展示「来源：npm / npx / dsh」与「Profile：<名称>」。卸载按记录中的 Profile 路由到对应 `dsh plugin --profile <profile> remove`，启用 / 禁用同样作用于记录中的 Profile。旧版本已安装的插件没有来源记录，默认按 `dsh` / `web` 兼容显示与操作。
 
-通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh Harness）→ 填写插件名称（dsh Harness 时还需填写 Profile，如 `web`）→ 点击安装。「dsh Harness」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
+通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh）→ 填写插件名称（dsh 时还需填写 Profile，如 `web`）→ 点击安装。「dsh」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
 
 ## 技术栈
 
@@ -99,7 +100,7 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 | 页签 | 功能 | 操作要点 |
 | --- | --- | --- |
 | 仪表盘 | 统一监控：DSH 服务 / 插件概要 / 版本概要 / 异常汇总 | 各监控卡片独立刷新（DSH 服务卡含启停操作）；卡片内的「管理插件 / 版本管理 / 查看日志」可直接跳转对应页签；异常卡支持清空日志 |
-| 插件 | 安装 / 启停 / 卸载 / 导出 / 应用 | 选择安装方式（npm / npx / dsh Harness）并输入插件名（如 `dshmarket`）安装，dsh Harness 可指定 Profile（如 `web`）；列表用标签展示「来源」与「Profile」；启用 / 禁用 / 卸载按记录来源与 Profile 路由；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」） |
+| 插件 | 安装 / 启停 / 卸载 / 导出 / 应用 | 选择安装方式（npm / npx / dsh）并输入插件名（如 `dshmarket`）安装，dsh 可指定 Profile（如 `web`）；列表用标签展示「来源」与「Profile」；启用 / 禁用 / 卸载按记录来源与 Profile 路由；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」） |
 | Skills | 仓库管理 / 安装 / 启停 / 批量 / 更新 / 搜索 / 备份迁移 | 先添加仓库并同步（默认示例 mattpocock/skills）；展开仓库查看可安装技能，安装到全局或项目作用域；"检测更新"对比来源 commit；"创建备份"写入运行目录备份 |
 | 版本 | 检查 / 下载 / 切换 / 回退 / 删除 | 来源可选"最新发布版本"或"最新提交（源码）"；本机版本列表离线可读；不能删除当前使用中的版本 |
 | 日志 | 进程状态 / 实时日志 | 状态卡显示 DSH 状态、端口、PID、运行版本；日志滚动显示应用 / DSH / 安装三类来源 |

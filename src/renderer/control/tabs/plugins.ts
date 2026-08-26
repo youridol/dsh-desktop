@@ -17,8 +17,14 @@ let profileRowEl: HTMLElement
 let listEl: HTMLElement
 let applyBtn: HTMLButtonElement
 
+const INSTALL_SOURCE_LABELS: Record<PluginInstallSource, string> = {
+  npm: 'npm',
+  npx: 'npx',
+  'dsh-profile': 'dsh',
+}
+
 function sourceLabel(source: PluginInstallSource): string {
-  return source === 'dsh-profile' ? 'dsh Harness' : source
+  return INSTALL_SOURCE_LABELS[source]
 }
 
 function toggleProfileRow(): void {
@@ -38,9 +44,9 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
       text('安装方式：'),
       segmented<PluginInstallSource>(
         [
-          { value: 'npm', label: 'npm' },
-          { value: 'npx', label: 'npx' },
-          { value: 'dsh-profile', label: 'dsh Harness' },
+          { value: 'npm', label: INSTALL_SOURCE_LABELS.npm },
+          { value: 'npx', label: INSTALL_SOURCE_LABELS.npx },
+          { value: 'dsh-profile', label: INSTALL_SOURCE_LABELS['dsh-profile'] },
         ],
         source,
         (v) => {
@@ -57,7 +63,7 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
       ),
       button({ variant: 'primary', size: 'sm', onClick: () => void installPlugin() }, text('安装')),
     ),
-    listHint('通过 dsh plugin --profile <profile> add 安装 npm/npx 插件；dsh Harness 安装可指定任意 Profile，需要 pnpm。'),
+    listHint('通过 dsh plugin --profile <profile> add 安装 npm/npx 插件；dsh 安装可指定任意 Profile，需要 pnpm。'),
   )
 
   const listCard = card(
@@ -170,7 +176,7 @@ async function installPlugin(): Promise<void> {
     return
   }
   if (source === 'dsh-profile' && !profile) {
-    toastFn('dsh Harness 安装必须填写 Profile', true)
+    toastFn('dsh 安装必须填写 Profile', true)
     return
   }
   const opts: { name: string; source: PluginInstallSource; profile?: string } =

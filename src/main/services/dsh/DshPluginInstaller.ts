@@ -105,7 +105,7 @@ function NpxPluginInstaller(exec: Executor): PluginInstaller {
 // ---- dsh-profile installer ----
 
 /**
- * dsh Harness native profile install via `dsh plugin --profile <profile> add
+ * dsh native profile install via `dsh plugin --profile <profile> add
  * <plugin>` — `dsh plugin --profile web add dshmarket` is the requested
  * channel. `profile` is validated before this installer runs.
  */

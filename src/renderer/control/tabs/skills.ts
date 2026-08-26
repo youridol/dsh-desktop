@@ -1,6 +1,6 @@
 /**
  * Skills 管理：仓库管理、作用域（全局/项目）安装生命周期、批量操作、
- * GitHub 搜索、更新检测与备份/导入/导出。
+ * Agent 管理（全局/项目目录本机 Agent）、GitHub 搜索、更新检测与备份/导入/导出。
  *
  * 页面结构与表现统一走 control/ui 组件库（shadcn/ui 风格）；所有操作经
  * preload 桥接（window.dshc）转发到主进程 SkillsService；不读写
@@ -24,6 +24,7 @@ import {
   switchControl,
   text,
 } from '../ui'
+import { renderAgentsPanel } from './skills/agents-panel'
 
 let pane: HTMLElement
 let toastFn: (msg: string, err?: boolean) => void = () => {}
@@ -81,6 +82,11 @@ function renderShell(): void {
     h('div', { id: 'overviewBody' }),
   )
 
+  const agentCard = card(
+    { title: 'Agent 管理' },
+    h('div', { id: 'agentPanelBody' }),
+  )
+
   const repoCard = card(
     { title: 'Skills 仓库', bodyClassName: 'card-body' },
     row(
@@ -133,7 +139,7 @@ function renderShell(): void {
     listContainer('backupList'),
   )
 
-  pane.append(overview)
+  pane.append(overview, agentCard)
   pane.append(h('div', { class: 'skills-cols' }, repoCard, instCard))
   pane.append(h('div', { class: 'skills-cols' }, searchCard, backupCard))
 }
@@ -206,6 +212,8 @@ async function refreshAll(): Promise<void> {
   renderOverview()
   renderRepoList()
   renderInstalledList()
+  const agentBody = pane.querySelector<HTMLElement>('#agentPanelBody')
+  if (agentBody) renderAgentsPanel(agentBody, installed.filter((s) => s.repoId === 'agents'), state, refreshAll, toastFn)
   renderBackupList()
   renderSearchList()
 }
@@ -491,7 +499,7 @@ function renderInstalledItem(s: InstalledSkill): HTMLElement {
     sw.root,
     h('div', { class: 'meta grow' },
       h('div', { class: 'name' }, text(s.name), ...badgesArr),
-      h('div', { class: 'sub mono' }, text(s.repoId === 'agents' ? `本地全局 Skills（${state?.globalDir ?? ''}） · ${s.path}` : `${s.repoUrl} · ${s.path} · commit ${shortCommit(s.commit)} · 更新于 ${fmtTs(s.updatedAt)}`)),
+      h('div', { class: 'sub mono' }, text(s.repoId === 'agents' ? `本地${scopeLabel()} Agent（${s.scope === 'global' ? (state?.globalDir ?? '') : (state?.projectDir ?? '')}） · ${s.path}` : `${s.repoUrl} · ${s.path} · commit ${shortCommit(s.commit)} · 更新于 ${fmtTs(s.updatedAt)}`)),
     ),
     button({ size: 'sm', onClick: () => toggleSkillDetail(s.key) }, text('详情')),
     button({ size: 'sm', disabled: !updatesByKey.has(s.key), onClick: () => void updateSkill(s.key) }, text('更新')),
