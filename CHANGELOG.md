@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v0.8.0] - 2026-08-26
 
 ### 重构（控制面板 UI 统一与 Skills 概览修复）
 
