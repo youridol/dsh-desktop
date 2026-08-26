@@ -1,11 +1,12 @@
 /**
  * DSH 服务监控 Widget。
  *
- * 直接复用既有 DSH 状态机（src/main/dsh/manager.ts）与 `app:getState` /
- * `dsh:status` 事件：展示运行状态、端口、PID、当前版本与运行时长，并提供
- * 启动 / 停止 / 重启操作入口 —— 不重复实现任何服务生命周期逻辑。
+ * 直接复用既有 DSH 状态机（src/main/dsh/manager.ts）与 app:getState / dsh:status
+ * 事件：展示运行状态、端口、PID、当前版本与运行时长，并提供启动 / 停止 / 重启
+ * 操作入口 —— 不重复实现任何服务生命周期逻辑。
  */
-import { h, type DshStatus } from '../../../api'
+import { type DshStatus } from '../../../api'
+import { badge, button, h, kv, row, text } from '../../../ui'
 import { registerDashboardWidget, type DashboardWidgetContext } from '../widget'
 
 const STATE_LABELS: Record<DshStatus['state'], string> = {
@@ -23,39 +24,30 @@ let ctxRef: DashboardWidgetContext | null = null
 let unsubStatus: (() => void) | null = null
 
 function statusBadge(state: DshStatus['state']): HTMLElement {
-  const cls = state === 'running' ? 'ok' : state === 'starting' || state === 'stopping' ? 'warn' : 'err'
-  return h('span', { class: `badge ${cls}` }, document.createTextNode(STATE_LABELS[state] ?? state))
+  const variant = state === 'running' ? 'ok' : state === 'starting' || state === 'stopping' ? 'warn' : 'err'
+  return badge(STATE_LABELS[state] ?? state, variant)
 }
 
 function renderStatus(s: DshStatus): void {
   if (!host) return
-  host.innerHTML = ''
-  const uptime =
-    s.startedAt && s.state === 'running' ? `${Math.floor((Date.now() - s.startedAt) / 1000)} 秒` : '—'
-  host.append(
-    h('div', { class: 'row' },
-      statusBadge(s.state),
-      h('span', { class: 'muted' }, document.createTextNode(`端口 :${s.port}`)),
-    ),
-    h('div', { class: 'kv', style: 'margin-top:8px' },
-      h('div', { class: 'k' }, document.createTextNode('地址')),
-      h('div', { class: 'mono' }, document.createTextNode(s.serviceUrl)),
-      h('div', { class: 'k' }, document.createTextNode('版本')),
-      h('div', { class: 'mono' }, document.createTextNode(s.version === 'bundled' ? '捆绑版本' : s.version)),
-      h('div', { class: 'k' }, document.createTextNode('PID')),
-      h('div', { class: 'mono' }, document.createTextNode(s.pid ? String(s.pid) : '—')),
-      h('div', { class: 'k' }, document.createTextNode('已运行')),
-      h('div', { class: 'mono' }, document.createTextNode(uptime)),
+  host.replaceChildren(
+    kv([
+      ['状态', statusBadge(s.state)],
+      ['地址', s.serviceUrl],
+      ['端口', String(s.port)],
+      ['版本', s.version === 'bundled' ? '捆绑版本' : s.version],
+      ['PID', s.pid ? String(s.pid) : '—'],
+      ['已运行', s.startedAt && s.state === 'running' ? `${Math.floor((Date.now() - s.startedAt) / 1000)} 秒` : '—'],
+    ]),
+    row(
+      button({ size: 'sm', onClick: () => void ctl('restart') }, text('重启')),
+      button({ size: 'sm', onClick: () => void ctl('stop') }, text('停止')),
+      button({ size: 'sm', onClick: () => void ctl('start') }, text('启动')),
     ),
   )
   if (s.detail && s.state !== 'running') {
-    host.append(h('p', { class: 'muted', style: 'margin:6px 0 0' }, document.createTextNode(s.detail.slice(0, 120))))
+    host.append(h('p', { class: 'muted' }, text(s.detail.slice(0, 120))))
   }
-  host.append(h('div', { class: 'row', style: 'margin-top:8px' },
-    h('button', { class: 'btn small primary', onclick: () => void ctl('restart') }, document.createTextNode('重启')),
-    h('button', { class: 'btn small', onclick: () => void ctl('stop') }, document.createTextNode('停止')),
-    h('button', { class: 'btn small', onclick: () => void ctl('start') }, document.createTextNode('启动')),
-  ))
 }
 
 async function ctl(action: 'start' | 'stop' | 'restart'): Promise<void> {

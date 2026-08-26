@@ -2,18 +2,28 @@
  * Skills 管理：仓库管理、作用域（全局/项目）安装生命周期、批量操作、
  * GitHub 搜索、更新检测与备份/导入/导出。
  *
- * UI 保持无框架：所有操作经 preload 桥接（window.dshc）转发到主进程
- * SkillsService；不读写 deepseek-harness 源码。
+ * 页面结构与表现统一走 control/ui 组件库（shadcn/ui 风格）；所有操作经
+ * preload 桥接（window.dshc）转发到主进程 SkillsService；不读写
+ * deepseek-harness 源码。
  */
+import { bridge, type SkillRepositoryView, type SkillScope, type SkillsState, type SkillBackupView, type InstalledSkill, type DiscoveredSkill } from '../api'
 import {
-  bridge,
+  badge,
+  button,
+  card,
+  checkbox,
+  confirmDialog,
+  emptyState,
   h,
-  type SkillRepositoryView,
-  type SkillScope,
-  type SkillsState,
-  type SkillBackupView,
-  type InstalledSkill,
-} from '../api'
+  inputEl,
+  kv,
+  listContainer,
+  listHint,
+  row,
+  segmented,
+  switchControl,
+  text,
+} from '../ui'
 
 let pane: HTMLElement
 let toastFn: (msg: string, err?: boolean) => void = () => {}
@@ -26,14 +36,6 @@ let selected = new Set<string>()
 let searchResults: SearchResultView[] = []
 let backupCache: SkillBackupView[] = []
 
-interface DiscoveredSkillView {
-  id: string
-  name: string
-  description: string | null
-  path: string
-  skillFile: string
-  files: string[]
-}
 interface SearchResultView {
   fullName: string
   name: string
@@ -51,18 +53,6 @@ export function initSkills(paneEl: HTMLElement, toast: (msg: string, err?: boole
 }
 
 // ---- helpers ----
-
-function text(str: string): Text {
-  return document.createTextNode(str)
-}
-
-function row(...children: Array<Node | null | undefined>): HTMLElement {
-  return h('div', { class: 'row' }, ...children)
-}
-
-function badge(t: string, cls = ''): HTMLElement {
-  return h('span', { class: `badge ${cls}`.trim() }, text(t))
-}
 
 function fmtTs(ts: number | null): string {
   if (!ts) return '—'
@@ -82,123 +72,122 @@ function scopeLabel(): string {
 // ---- shell ----
 
 function renderShell(): void {
-  pane.innerHTML = ''
-
-  const overview = h('div', { class: 'card' })
-  const overviewHead = h('div', { class: 'dash-widget-head' })
-  overviewHead.append(h('h3', {}, text('Skills 概览')))
-  overviewHead.append(h('button', { class: 'btn primary small', onclick: () => void syncAll() }, text('同步全部')))
-  overview.append(overviewHead)
-  const kv = h('div', { class: 'kv' })
-  kv.append(
-    h('div', { class: 'k' }, text('仓库目录')), h('div', { class: 'mono' }, text(state?.reposDir ?? '…')),
-    h('div', { class: 'k' }, text('Agents Home')), h('div', { class: 'mono' }, text(state?.agentsHome ?? '…')),
-    h('div', { class: 'k' }, text('全局 Skills')), h('div', { class: 'mono' }, text(state?.globalDir ?? '…')),
-    h('div', { class: 'k' }, text('项目 Skills')), h('div', { class: 'mono' }, text(state?.projectDir ?? '…')),
-    h('div', { class: 'k' }, text('备份目录')), h('div', { class: 'mono' }, text(state?.backupsDir ?? '…')),
+  const overview = card(
+    { title: 'Skills 概览', actions: [
+      button({ size: 'sm', onClick: () => void checkUpdates() }, text('检测更新')),
+      button({ size: 'sm', onClick: () => void updateAllAvailable() }, text('更新全部')),
+      button({ variant: 'primary', size: 'sm', onClick: () => void syncAll() }, text('同步全部')),
+    ] },
+    h('div', { id: 'overviewBody' }),
   )
-  overview.append(kv)
-  overview.append(row(
-    h('span', { class: 'muted' }, text('作用域：')),
-    scopeButton('global'),
-    scopeButton('project'),
-    h('span', { class: 'grow' }),
-    h('button', { class: 'btn small', onclick: () => void checkUpdates() }, text('检测更新')),
-    h('button', { class: 'btn small', onclick: () => void updateAllAvailable() }, text('更新全部')),
-  ))
-  pane.append(overview)
 
-  const repoCard = h('div', { class: 'card' })
-  repoCard.append(h('h3', {}, text('Skills 仓库')))
-  const urlInput = h('input', {
-    type: 'text',
-    placeholder: state?.defaultRepository ?? 'https://github.com/mattpocock/skills',
-    style: 'width:300px',
-  }) as HTMLInputElement
-  const nameInput = h('input', { type: 'text', placeholder: '仓库名称（可选）', style: 'width:140px' }) as HTMLInputElement
-  const addBtn = h('button', {
-    class: 'btn primary',
-    onclick: () => void addRepo(urlInput, nameInput, addBtn),
-  }, text('添加并拉取')) as HTMLButtonElement
-  repoCard.append(
-    row(h('span', { class: 'muted' }, text('仓库地址：')), urlInput, nameInput, addBtn),
-    h('p', { class: 'muted' }, text('支持任意公开 http(s) Skills 仓库；私有仓库请在“设置”页配置 GitHub 凭据。')),
+  const repoCard = card(
+    { title: 'Skills 仓库', bodyClassName: 'card-body' },
+    row(
+      text('仓库地址：'),
+      inputEl({ type: 'text', placeholder: state?.defaultRepository ?? 'https://github.com/mattpocock/skills', width: 220, className: 'repo-url-input' }),
+      inputEl({ type: 'text', placeholder: '名称（可选）', width: 110, className: 'repo-name-input' }),
+      button({ variant: 'primary', size: 'sm', className: 'repo-add-btn', onClick: () => void addRepo() }, text('添加并拉取')),
+    ),
+    listHint('支持任意公开 http(s) Skills 仓库；私有仓库请在「设置」页配置 GitHub 凭据。'),
+    listContainer('repoList'),
   )
-  const repoList = h('div', { id: 'repoList', class: 'list' })
-  repoCard.append(repoList)
-  pane.append(repoCard)
 
-  const availCard = h('div', { class: 'card' })
-  const availHead = h('div', { class: 'dash-widget-head' })
-  availHead.append(h('h3', {}, text('仓库内 Skills')))
-  availHead.append(h('span', { class: 'muted' }, text('展开仓库查看可安装技能')))
-  availCard.append(availHead)
-  const availList = h('div', { id: 'availList', class: 'list' })
-  availCard.append(availList)
-  pane.append(availCard)
-
-  const instCard = h('div', { class: 'card' })
-  instCard.append(h('h3', {}, text('已安装 Skills（全局 / 项目隔离）')))
-  const selectAll = h('input', { type: 'checkbox', id: 'selectAll' }) as HTMLInputElement
+  const instCard = card({ title: '已安装 Skills' })
+  const selectAll = checkbox({ id: 'selectAll' })
   selectAll.addEventListener('change', () => {
     selected = selectAll.checked ? new Set(filteredInstalled().map((s) => s.key)) : new Set()
     renderInstalledList()
   })
-  instCard.append(row(
-    h('label', { style: 'display:inline-flex;align-items:center;gap:6px' }, selectAll, text('全选')),
-    h('button', { class: 'btn small', onclick: () => void batchAction('enable') }, text('批量启用')),
-    h('button', { class: 'btn small', onclick: () => void batchAction('disable') }, text('批量停用')),
-    h('button', { class: 'btn small', onclick: () => void batchAction('uninstall') }, text('批量卸载')),
-    h('button', { class: 'btn small danger', onclick: () => void batchAction('delete') }, text('批量删除')),
-  ))
-  const instList = h('div', { id: 'instList', class: 'list' })
-  instCard.append(instList)
-  pane.append(instCard)
-
-  const searchCard = h('div', { class: 'card' })
-  searchCard.append(h('h3', {}, text('GitHub Skills 搜索')))
-  const queryInput = h('input', { type: 'text', placeholder: '关键词，如 skills / claude skill / dsh-skill', style: 'width:260px' }) as HTMLInputElement
-  const searchBtn = h('button', { class: 'btn primary', onclick: () => void doSearch(queryInput, searchBtn) }, text('搜索')) as HTMLButtonElement
-  searchCard.append(row(queryInput, searchBtn))
-  const searchList = h('div', { id: 'searchList', class: 'list' })
-  searchCard.append(searchList)
-  pane.append(searchCard)
-
-  const backupCard = h('div', { class: 'card' })
-  backupCard.append(h('h3', {}, text('备份与迁移')))
-  backupCard.append(
-    row(
-      h('button', { class: 'btn small', onclick: () => void doExport(false) }, text('导出配置')),
-      h('button', { class: 'btn small', onclick: () => void doExport(true) }, text('导出（含技能内容）')),
-      h('button', { class: 'btn small', onclick: () => void doImport() }, text('导入')),
-      h('button', { class: 'btn primary small', onclick: () => void doCreateBackup() }, text('创建备份')),
-      h('button', { class: 'btn small', onclick: () => void doRefreshBackups() }, text('刷新备份')),
-    ),
-    h('p', { class: 'muted' }, text('备份自动保存到备份目录，包含仓库注册表、已安装清单与技能文件内容。')),
+  const instToolbar = row(
+    h('label', { class: 'checkbox-label' }, selectAll, text('全选')),
+    button({ size: 'sm', onClick: () => void batchAction('enable') }, text('批量启用')),
+    button({ size: 'sm', onClick: () => void batchAction('disable') }, text('批量停用')),
+    button({ size: 'sm', onClick: () => void batchAction('uninstall') }, text('批量卸载')),
+    button({ size: 'sm', variant: 'danger', onClick: () => void batchAction('delete') }, text('批量删除')),
   )
-  const backupList = h('div', { id: 'backupList', class: 'list' })
-  backupCard.append(backupList)
-  pane.append(backupCard)
+  instCard.querySelector('.card-body')?.append(
+    instToolbar,
+    listHint('按当前作用域展示；勾选后可批量启用/停用/卸载/删除。'),
+    listContainer('instList'),
+  )
+
+  const searchCard = card(
+    { title: 'GitHub Skills 搜索' },
+    row(
+      inputEl({ type: 'text', placeholder: '关键词，如 skills / claude skill / dsh-skill', width: 220, className: 'search-query-input' }),
+      button({ variant: 'primary', size: 'sm', className: 'search-btn', onClick: () => void doSearch() }, text('搜索')),
+    ),
+    listContainer('searchList'),
+  )
+
+  const backupCard = card(
+    { title: '备份与迁移', actions: [
+      button({ size: 'sm', onClick: () => void doExport(false) }, text('导出配置')),
+      button({ size: 'sm', onClick: () => void doExport(true) }, text('导出（含内容）')),
+      button({ size: 'sm', onClick: () => void doImport() }, text('导入')),
+      button({ variant: 'primary', size: 'sm', onClick: () => void doCreateBackup() }, text('创建备份')),
+      button({ size: 'sm', onClick: () => void doRefreshBackups() }, text('刷新备份')),
+    ] },
+    listHint('备份自动保存到备份目录，包含仓库注册表、已安装清单与技能文件内容。'),
+    listContainer('backupList'),
+  )
+
+  pane.append(overview)
+  pane.append(h('div', { class: 'skills-cols' }, repoCard, instCard))
+  pane.append(h('div', { class: 'skills-cols' }, searchCard, backupCard))
 }
 
-function scopeButton(scope: SkillScope): HTMLElement {
-  return h('button', {
-    class: 'btn small',
-    'data-scope': scope,
-    onclick: () => {
-      currentScope = scope
-      selected.clear()
-      renderScopeButtons()
-      renderInstalledList()
-    },
-  }, text(scope === 'global' ? '全局 Skills' : '项目 Skills'))
+// ---- 概览 ----
+
+function renderOverview(): void {
+  const body = pane.querySelector('#overviewBody')
+  if (!body) return
+  const list = filteredInstalled()
+  const globalCount = installed.filter((s) => s.scope === 'global').length
+  const projectCount = installed.filter((s) => s.scope === 'project').length
+  const stats = h('div', { class: 'overview-stats' },
+    statBox('仓库', state?.repositoryCount ?? 0, ''),
+    statBox('已安装', state?.installedCount ?? 0, ''),
+    statBox('全局', globalCount, 'ok'),
+    statBox('项目', projectCount, 'accent'),
+    statBox('备份', backupCache.length, ''),
+  )
+  const scopeRow = row(
+    text('作用域：'),
+    segmented(
+      [{ value: 'global', label: '全局 Skills' }, { value: 'project', label: '项目 Skills' }],
+      currentScope,
+      (v) => {
+        currentScope = v
+        selected.clear()
+        renderOverview()
+        renderInstalledList()
+      },
+    ),
+    h('span', { class: 'grow' }),
+    listHint(`当前作用域：${scopeLabel()}（${list.length} 个已安装）`),
+  )
+  body.replaceChildren(
+    scopeRow,
+    stats,
+    kv([
+      ['Skills 目录', state?.skillsDir ?? '—'],
+      ['仓库缓存', state?.reposDir ?? '—'],
+      ['全局目录', state?.globalDir ?? '—'],
+      ['项目目录', state?.projectDir ?? '—'],
+      ['备份目录', state?.backupsDir ?? '—'],
+      ['Agents Home', state?.agentsHome ?? '—'],
+      ['默认仓库', state?.defaultRepository ?? '—'],
+    ]),
+  )
 }
 
-function renderScopeButtons(): void {
-  pane.querySelectorAll('[data-scope]').forEach((el) => {
-    const btn = el as HTMLButtonElement
-    btn.classList.toggle('active', btn.dataset.scope === currentScope)
-  })
+function statBox(label: string, value: number, cls: string): HTMLElement {
+  return h('div', { class: 'stat' },
+    h('div', { class: ['dash-count', cls].filter(Boolean).join(' ') }, text(String(value))),
+    h('div', { class: 'stat-label' }, text(label)),
+  )
 }
 
 // ---- refresh / data ----
@@ -214,7 +203,7 @@ async function refreshAll(): Promise<void> {
   repos = r
   installed = i
   backupCache = b
-  renderScopeButtons()
+  renderOverview()
   renderRepoList()
   renderInstalledList()
   renderBackupList()
@@ -227,7 +216,11 @@ function filteredInstalled(): InstalledSkill[] {
 
 // ---- repositories ----
 
-async function addRepo(urlInput: HTMLInputElement, nameInput: HTMLInputElement, btn: HTMLButtonElement): Promise<void> {
+async function addRepo(): Promise<void> {
+  const urlInput = pane.querySelector<HTMLInputElement>('.repo-url-input')
+  const nameInput = pane.querySelector<HTMLInputElement>('.repo-name-input')
+  const btn = pane.querySelector<HTMLButtonElement>('.repo-add-btn')
+  if (!urlInput || !nameInput || !btn) return
   const url = urlInput.value.trim()
   if (!url) {
     toastFn('请输入仓库地址', true)
@@ -274,52 +267,55 @@ async function syncAll(): Promise<void> {
 function renderRepoList(): void {
   const el = pane.querySelector('#repoList')
   if (!el) return
-  el.innerHTML = ''
+  el.replaceChildren()
   if (repos.length === 0) {
-    el.append(h('p', { class: 'empty' }, text('暂无仓库。添加默认示例：https://github.com/mattpocock/skills')))
+    el.append(emptyState('暂无仓库。添加默认示例：https://github.com/mattpocock/skills'))
     return
   }
   for (const repo of repos) el.append(renderRepoItem(repo))
 }
 
 function renderRepoItem(repo: SkillRepositoryView): HTMLElement {
-  const enabledSwitch = h('input', { type: 'checkbox' }) as HTMLInputElement
-  enabledSwitch.checked = repo.enabled
-  enabledSwitch.addEventListener('change', async () => {
-    try {
-      await bridge().setSkillRepoEnabled(repo.id, enabledSwitch.checked)
-      await refreshAll()
-    } catch (err) {
-      enabledSwitch.checked = !enabledSwitch.checked
-      toastFn(`切换失败：${String(err)}`, true)
-    }
+  const sw = switchControl(repo.enabled, (on) => {
+    void (async () => {
+      try {
+        await bridge().setSkillRepoEnabled(repo.id, on)
+        await refreshAll()
+      } catch (err) {
+        sw.input.checked = !on
+        toastFn(`切换失败：${String(err)}`, true)
+      }
+    })()
   })
   const badgesArr: Node[] = []
   if (repo.enabled) badgesArr.push(badge('已启用', 'ok'))
   if (repo.lastSyncError) badgesArr.push(badge('同步失败', 'err'))
-  else if (repo.lastSyncAt) badgesArr.push(badge(`已同步 ${fmtTs(repo.lastSyncAt)}`, ''))
-  badgesArr.push(badge(`分支 ${repo.branch ?? '—'}`, ''))
-  badgesArr.push(badge(`commit ${shortCommit(repo.lastCommit)}`, ''))
+  else if (repo.lastSyncAt) badgesArr.push(badge(`已同步 ${fmtTs(repo.lastSyncAt)}`))
+  badgesArr.push(badge(`分支 ${repo.branch ?? '—'}`))
+  badgesArr.push(badge(`commit ${shortCommit(repo.lastCommit)}`))
   badgesArr.push(badge(`${repo.skillsCount ?? '?'} 个技能`, 'accent'))
 
   return h('div', { class: 'item', 'data-repo-id': repo.id },
-    h('label', { class: 'switch' }, enabledSwitch, h('span', { class: 'track' })),
+    sw.root,
     h('div', { class: 'meta grow' },
       h('div', { class: 'name' }, text(repo.name), ...badgesArr),
       h('div', { class: 'sub mono' }, text(`${repo.url}${repo.lastSyncError ? ' · ' + repo.lastSyncError : ''}`)),
     ),
-    h('button', { class: 'btn small', onclick: () => void syncRepo(repo.id) }, text('同步')),
-    h('button', { class: 'btn small', onclick: () => toggleExpandRepo(repo.id) }, text('查看 Skills')),
-    h('button', { class: 'btn small', onclick: () => toggleEditRepo(repo.id) }, text('编辑')),
-    h('button', {
-      class: 'btn small danger',
-      onclick: () => void deleteRepo(repo),
-    }, text('删除')),
+    button({ size: 'sm', onClick: () => void syncRepo(repo.id) }, text('同步')),
+    button({ size: 'sm', onClick: () => toggleExpandRepo(repo.id) }, text('查看 Skills')),
+    button({ size: 'sm', onClick: () => toggleEditRepo(repo.id) }, text('编辑')),
+    button({ size: 'sm', variant: 'danger', onClick: () => void deleteRepo(repo) }, text('删除')),
   )
 }
 
 async function deleteRepo(repo: SkillRepositoryView): Promise<void> {
-  if (!confirm(`确定删除仓库 ${repo.name}（${repo.url}）？已安装的 Skill 副本不受影响。`)) return
+  const ok = await confirmDialog({
+    title: '删除仓库',
+    message: `确定删除仓库 ${repo.name}（${repo.url}）？已安装的 Skill 副本不受影响。`,
+    confirmLabel: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await bridge().removeSkillRepo(repo.id)
     toastFn(`已删除仓库 ${repo.name}`)
@@ -341,51 +337,48 @@ function toggleExpandRepo(repoId: string): void {
     existing.remove()
     return
   }
-  const detail = h('div', { class: 'repo-detail', style: 'width:100%' })
+  const detail = h('div', { class: 'repo-detail' })
   item.append(detail)
   void loadAvailable(repoId, detail)
 }
 
 async function loadAvailable(repoId: string, container: HTMLElement): Promise<void> {
-  container.innerHTML = ''
-  container.append(h('p', { class: 'muted' }, text('正在扫描仓库…')))
+  container.replaceChildren(listHint('正在扫描仓库…'))
   try {
     const result = await bridge().listAvailableSkills(repoId)
     renderAvailable(result, container)
   } catch (err) {
-    container.innerHTML = ''
-    container.append(h('p', { class: 'empty' }, text(`无法读取：${String(err)}`)))
+    container.replaceChildren(emptyState(`无法读取：${String(err)}`))
   }
 }
 
-function renderAvailable(result: { repo: SkillRepositoryView; skills: DiscoveredSkillView[] }, container: HTMLElement): void {
-  container.innerHTML = ''
-  container.append(row(
-    h('button', {
-      class: 'btn primary small',
-      onclick: () => void installAllAvailable(result.repo),
-    }, text(`全部安装到${scopeLabel()}`)),
-    h('span', { class: 'muted' }, text(`共 ${result.skills.length} 个技能`)),
-  ))
+function renderAvailable(result: { repo: SkillRepositoryView; skills: DiscoveredSkill[] }, container: HTMLElement): void {
+  container.replaceChildren(
+    row(
+      button({ variant: 'primary', size: 'sm', onClick: () => void installAllAvailable(result.repo) }, text(`全部安装到${scopeLabel()}`)),
+      listHint(`共 ${result.skills.length} 个技能`),
+    ),
+  )
   if (result.skills.length === 0) {
-    container.append(h('p', { class: 'empty' }, text('仓库中未发现 SKILL.md 技能')))
+    container.append(emptyState('仓库中未发现 SKILL.md 技能'))
     return
   }
   for (const s of result.skills) container.append(renderAvailableItem(result.repo, s))
 }
 
-function renderAvailableItem(repo: SkillRepositoryView, skill: DiscoveredSkillView): HTMLElement {
+function renderAvailableItem(repo: SkillRepositoryView, skill: DiscoveredSkill): HTMLElement {
   const key = `${repo.id}:${skill.path}`
   const already = installed.some((x) => x.key === key)
   return h('div', { class: 'item' },
     h('div', { class: 'meta grow' },
-      h('div', { class: 'name' }, text(skill.name), already ? badge('已安装', 'ok') : badge('未安装', '')),
+      h('div', { class: 'name' }, text(skill.name), already ? badge('已安装', 'ok') : badge('未安装')),
       h('div', { class: 'sub mono' }, text(`${skill.path} · ${skill.description ?? ''}`)),
     ),
-    h('button', {
-      class: 'btn small primary',
+    button({
+      size: 'sm',
+      variant: already ? 'default' : 'primary',
       disabled: already,
-      onclick: () => void installSkill(repo.id, skill.path),
+      onClick: () => void installSkill(repo.id, skill.path),
     }, text(already ? '已安装' : '安装')),
   )
 }
@@ -420,26 +413,25 @@ function toggleEditRepo(repoId: string): void {
   }
   const repo = repos.find((r) => r.id === repoId)
   if (!repo) return
-  const nameInput = h('input', { type: 'text', value: repo.name, style: 'width:180px' }) as HTMLInputElement
-  const urlInput = h('input', { type: 'text', value: repo.url, style: 'width:340px' }) as HTMLInputElement
-  const editRow = h('div', { class: 'row repo-edit', style: 'width:100%' },
-    h('span', { class: 'muted' }, text('名称：')), nameInput,
-    h('span', { class: 'muted' }, text('地址：')), urlInput,
-    h('button', {
-      class: 'btn small primary',
-      onclick: async () => {
-        try {
-          await bridge().updateSkillRepo(repoId, { name: nameInput.value, url: urlInput.value })
-          toastFn('仓库信息已更新')
-          await refreshAll()
-        } catch (err) {
-          toastFn(`更新失败：${String(err)}`, true)
-        }
-      },
-    }, text('保存')),
-    h('button', { class: 'btn small', onclick: () => item.querySelector('.repo-edit')?.remove() }, text('取消')),
+  const nameInput = inputEl({ type: 'text', value: repo.name, width: 150 })
+  const urlInput = inputEl({ type: 'text', value: repo.url, width: 260 })
+  const editRow = h('div', { class: 'repo-edit' },
+    text('名称：'), nameInput,
+    text('地址：'), urlInput,
+    button({ size: 'sm', variant: 'primary', onClick: () => void saveRepoEdit(repoId, nameInput, urlInput) }, text('保存')),
+    button({ size: 'sm', onClick: () => editRow.remove() }, text('取消')),
   )
   item.append(editRow)
+}
+
+async function saveRepoEdit(repoId: string, nameInput: HTMLInputElement, urlInput: HTMLInputElement): Promise<void> {
+  try {
+    await bridge().updateSkillRepo(repoId, { name: nameInput.value, url: urlInput.value })
+    toastFn('仓库信息已更新')
+    await refreshAll()
+  } catch (err) {
+    toastFn(`更新失败：${String(err)}`, true)
+  }
 }
 
 // ---- installed ----
@@ -449,16 +441,14 @@ function renderInstalledList(): void {
   if (!el) return
   const list = filteredInstalled()
   const children: Node[] = []
-  const hint = h('p', { class: 'muted', style: 'margin-bottom:6px' },
-    text(`共 ${list.length} 个（启用 ${list.filter((s) => s.enabled).length}） · 目录：${currentScope === 'global' ? state?.globalDir : state?.projectDir}`))
-  children.push(hint)
+  children.push(listHint(`共 ${list.length} 个（启用 ${list.filter((s) => s.enabled).length}） · 目录：${currentScope === 'global' ? state?.globalDir : state?.projectDir}`, 'inst-hint'))
   if (list.length === 0) {
-    children.push(h('p', { class: 'empty' }, text('暂无已安装 Skills。请先在“Skills 仓库”中添加仓库并安装。')))
+    children.push(emptyState('暂无已安装 Skills。请先在上方「Skills 仓库」中添加仓库并安装。'))
   } else {
     for (const s of list) children.push(renderInstalledItem(s))
   }
   el.replaceChildren(...children)
-  const selectAll = pane.querySelector('#selectAll') as HTMLInputElement | null
+  const selectAll = pane.querySelector<HTMLInputElement>('#selectAll')
   if (selectAll) {
     selectAll.checked = selected.size > 0 && list.length > 0 && selected.size === list.length
     selectAll.indeterminate = selected.size > 0 && selected.size < list.length
@@ -466,12 +456,11 @@ function renderInstalledList(): void {
 }
 
 function renderInstalledItem(s: InstalledSkill): HTMLElement {
-  const checkbox = h('input', { type: 'checkbox' }) as HTMLInputElement
-  checkbox.checked = selected.has(s.key)
-  checkbox.addEventListener('change', () => {
-    if (checkbox.checked) selected.add(s.key)
+  const checkboxSel = checkbox({ checked: selected.has(s.key) })
+  checkboxSel.addEventListener('change', () => {
+    if (checkboxSel.checked) selected.add(s.key)
     else selected.delete(s.key)
-    const all = pane.querySelector('#selectAll') as HTMLInputElement | null
+    const all = pane.querySelector<HTMLInputElement>('#selectAll')
     const list = filteredInstalled()
     if (all) {
       all.checked = selected.size === list.length && list.length > 0
@@ -479,17 +468,17 @@ function renderInstalledItem(s: InstalledSkill): HTMLElement {
     }
   })
 
-  const enabledSwitch = h('input', { type: 'checkbox' }) as HTMLInputElement
-  enabledSwitch.checked = s.enabled
-  enabledSwitch.addEventListener('change', async () => {
-    try {
-      await bridge().setSkillEnabled(s.key, s.scope, enabledSwitch.checked)
-      toastFn(`已${enabledSwitch.checked ? '启用' : '停用'} ${s.name}`)
-    } catch (err) {
-      enabledSwitch.checked = !enabledSwitch.checked
-      toastFn(`操作失败：${String(err)}`, true)
-    }
-    await refreshAll()
+  const sw = switchControl(s.enabled, (on) => {
+    void (async () => {
+      try {
+        await bridge().setSkillEnabled(s.key, s.scope, on)
+        toastFn(`已${on ? '启用' : '停用'} ${s.name}`)
+      } catch (err) {
+        sw.input.checked = !on
+        toastFn(`操作失败：${String(err)}`, true)
+      }
+      await refreshAll()
+    })()
   })
 
   const badgesArr: Node[] = []
@@ -498,16 +487,16 @@ function renderInstalledItem(s: InstalledSkill): HTMLElement {
   badgesArr.push(badge(s.scope === 'global' ? '全局' : '项目', 'accent'))
 
   return h('div', { class: 'item', 'data-key': s.key },
-    checkbox,
-    h('label', { class: 'switch' }, enabledSwitch, h('span', { class: 'track' })),
+    checkboxSel,
+    sw.root,
     h('div', { class: 'meta grow' },
       h('div', { class: 'name' }, text(s.name), ...badgesArr),
       h('div', { class: 'sub mono' }, text(s.repoId === 'agents' ? `本地全局 Skills（${state?.globalDir ?? ''}） · ${s.path}` : `${s.repoUrl} · ${s.path} · commit ${shortCommit(s.commit)} · 更新于 ${fmtTs(s.updatedAt)}`)),
     ),
-    h('button', { class: 'btn small', onclick: () => toggleSkillDetail(s.key) }, text('详情')),
-    h('button', { class: 'btn small', disabled: !updatesByKey.has(s.key), onclick: () => void updateSkill(s.key) }, text('更新')),
-    h('button', { class: 'btn small', onclick: () => void uninstallSkill(s.key, false) }, text('卸载')),
-    h('button', { class: 'btn small danger', onclick: () => void uninstallSkill(s.key, true) }, text('删除')),
+    button({ size: 'sm', onClick: () => toggleSkillDetail(s.key) }, text('详情')),
+    button({ size: 'sm', disabled: !updatesByKey.has(s.key), onClick: () => void updateSkill(s.key) }, text('更新')),
+    button({ size: 'sm', onClick: () => void uninstallSkill(s.key, false) }, text('卸载')),
+    button({ size: 'sm', variant: 'danger', onClick: () => void uninstallSkill(s.key, true) }, text('删除')),
   )
 }
 
@@ -525,18 +514,16 @@ function toggleSkillDetail(key: string): void {
   }
   const s = installed.find((x) => x.key === key)
   if (!s) return
-  const detail = h('div', { class: 'skill-detail', style: 'width:100%' })
-  const kv = h('div', { class: 'kv' })
-  kv.append(
-    h('div', { class: 'k' }, text('Key')), h('div', { class: 'mono' }, text(s.key)),
-    h('div', { class: 'k' }, text('来源仓库')), h('div', { class: 'mono' }, text(s.repoUrl)),
-    h('div', { class: 'k' }, text('仓库内路径')), h('div', { class: 'mono' }, text(s.path)),
-    h('div', { class: 'k' }, text('版本 / commit')), h('div', { class: 'mono' }, text(s.commit ?? '—')),
-    h('div', { class: 'k' }, text('安装时间')), h('div', { class: 'mono' }, text(fmtTs(s.installedAt))),
-    h('div', { class: 'k' }, text('文件数')), h('div', { class: 'mono' }, text(String(s.files.length))),
-  )
-  detail.append(kv)
-  detail.append(h('pre', { class: 'mono', style: 'white-space:pre-wrap;user-select:text' }, text(s.files.join('\n') || '（无文件）')))
+  const detail = h('div', { class: 'skill-detail' })
+  detail.append(kv([
+    ['Key', s.key],
+    ['来源仓库', s.repoUrl],
+    ['仓库内路径', s.path],
+    ['版本 / commit', s.commit ?? '—'],
+    ['安装时间', fmtTs(s.installedAt)],
+    ['文件数', String(s.files.length)],
+  ]))
+  detail.append(h('pre', { class: 'mono' }, text(s.files.join('\n') || '（无文件）')))
   item.append(detail)
 }
 
@@ -554,7 +541,13 @@ async function updateSkill(key: string): Promise<void> {
 async function uninstallSkill(key: string, isDelete: boolean): Promise<void> {
   const s = installed.find((x) => x.key === key)
   const label = s?.name ?? key
-  if (!confirm(`确定${isDelete ? '删除' : '卸载'}技能 ${label}？文件副本将从作用域目录移除。`)) return
+  const ok = await confirmDialog({
+    title: isDelete ? '删除技能' : '卸载技能',
+    message: `确定${isDelete ? '删除' : '卸载'}技能 ${label}？文件副本将从作用域目录移除。`,
+    confirmLabel: isDelete ? '删除' : '卸载',
+    danger: isDelete,
+  })
+  if (!ok) return
   try {
     if (isDelete) await bridge().deleteSkill(key, currentScope)
     else await bridge().uninstallSkill(key, currentScope)
@@ -573,7 +566,13 @@ async function batchAction(action: 'enable' | 'disable' | 'uninstall' | 'delete'
   }
   const actionLabel = action === 'enable' ? '启用' : action === 'disable' ? '停用' : action === 'uninstall' ? '卸载' : '删除'
   if (action === 'uninstall' || action === 'delete') {
-    if (!confirm(`确定${actionLabel}选中的 ${keys.length} 个技能？`)) return
+    const ok = await confirmDialog({
+      title: `批量${actionLabel}`,
+      message: `确定${actionLabel}选中的 ${keys.length} 个技能？`,
+      confirmLabel: actionLabel,
+      danger: action === 'delete',
+    })
+    if (!ok) return
   }
   try {
     const result = await bridge().batchSkills(keys, currentScope, action)
@@ -619,7 +618,10 @@ async function updateAllAvailable(): Promise<void> {
 
 // ---- search ----
 
-async function doSearch(input: HTMLInputElement, btn: HTMLButtonElement): Promise<void> {
+async function doSearch(): Promise<void> {
+  const input = pane.querySelector<HTMLInputElement>('.search-query-input')
+  const btn = pane.querySelector<HTMLButtonElement>('.search-btn')
+  if (!input || !btn) return
   const q = input.value.trim()
   if (!q) {
     toastFn('请输入搜索关键词', true)
@@ -642,22 +644,23 @@ async function doSearch(input: HTMLInputElement, btn: HTMLButtonElement): Promis
 function renderSearchList(): void {
   const el = pane.querySelector('#searchList')
   if (!el) return
-  el.innerHTML = ''
+  el.replaceChildren()
   if (searchResults.length === 0) {
-    el.append(h('p', { class: 'empty' }, text('搜索 GitHub 以发现 Skills 仓库（结果为空时可换关键词）。')))
+    el.append(emptyState('搜索 GitHub 以发现 Skills 仓库（结果为空时可换关键词）。'))
     return
   }
   for (const r of searchResults) el.append(renderSearchItem(r))
 }
 
 function renderSearchItem(r: SearchResultView): HTMLElement {
-  const btn = h('button', {
-    class: 'btn small primary',
-    onclick: () => void installSearch(r, btn),
-  }, text(`安装到${scopeLabel()}`)) as HTMLButtonElement
+  const btn = button({
+    size: 'sm',
+    variant: 'primary',
+    onClick: () => void installSearch(r, btn),
+  }, text(`安装到${scopeLabel()}`))
   return h('div', { class: 'item' },
     h('div', { class: 'meta grow' },
-      h('div', { class: 'name' }, text(r.fullName), badge(`${r.stars} ★`, '')),
+      h('div', { class: 'name' }, text(r.fullName), badge(`${r.stars} ★`)),
       h('div', { class: 'sub mono' }, text(r.description ?? '')),
     ),
     btn,
@@ -723,34 +726,34 @@ async function doRefreshBackups(): Promise<void> {
 }
 
 function renderBackupList(): void {
-  const el = pane.querySelector('#backupList') as HTMLElement | null
+  const el = pane.querySelector('#backupList')
   if (!el) return
-  el.innerHTML = ''
+  el.replaceChildren()
   if (backupCache.length === 0) {
-    el.append(h('p', { class: 'empty' }, text('暂无备份。点击“创建备份”保存当前配置与已安装技能。')))
+    el.append(emptyState('暂无备份。点击「创建备份」保存当前配置与已安装技能。'))
     return
   }
   for (const b of backupCache) el.append(renderBackupItem(b))
 }
+
 function renderBackupItem(b: SkillBackupView): HTMLElement {
   return h('div', { class: 'item' },
     h('div', { class: 'meta grow' },
       h('div', { class: 'name' }, text(b.id), badge(`${b.scope === 'all' ? '全部' : b.scope} · ${b.skillCount} 技能`, 'accent')),
       h('div', { class: 'sub mono' }, text(`${fmtTs(b.createdAt)} · ${(b.sizeBytes / 1024).toFixed(1)} KB`)),
     ),
-    h('button', {
-      class: 'btn small primary',
-      onclick: () => void restoreBackupEntry(b),
-    }, text('恢复')),
-    h('button', {
-      class: 'btn small danger',
-      onclick: () => void deleteBackupEntry(b),
-    }, text('删除')),
+    button({ size: 'sm', variant: 'primary', onClick: () => void restoreBackupEntry(b) }, text('恢复')),
+    button({ size: 'sm', variant: 'danger', onClick: () => void deleteBackupEntry(b) }, text('删除')),
   )
 }
 
 async function restoreBackupEntry(b: SkillBackupView): Promise<void> {
-  if (!confirm(`确定从备份 ${b.id} 恢复？将导入其中的仓库与技能（冲突会跳过并报告）。`)) return
+  const ok = await confirmDialog({
+    title: '恢复备份',
+    message: `确定从备份 ${b.id} 恢复？将导入其中的仓库与技能（冲突会跳过并报告）。`,
+    confirmLabel: '恢复',
+  })
+  if (!ok) return
   try {
     const report = await bridge().restoreSkillBackup(b.id, currentScope)
     toastFn(`恢复完成：技能 ${report.importedSkills} 个，冲突 ${report.conflicts.length} 个`, report.conflicts.length > 0)
@@ -761,7 +764,13 @@ async function restoreBackupEntry(b: SkillBackupView): Promise<void> {
 }
 
 async function deleteBackupEntry(b: SkillBackupView): Promise<void> {
-  if (!confirm(`确定删除备份 ${b.id}？`)) return
+  const ok = await confirmDialog({
+    title: '删除备份',
+    message: `确定删除备份 ${b.id}？`,
+    confirmLabel: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
     backupCache = await bridge().deleteSkillBackup(b.id)
     toastFn('备份已删除')

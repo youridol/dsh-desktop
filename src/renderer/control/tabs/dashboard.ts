@@ -5,7 +5,8 @@
  * 提供，壳只负责挂载卡片、注入上下文、按各自 refreshIntervalMs 周期刷新。
  * 新增、替换或删除监控模块都无需改动本文件之外的核心结构（见 widget.ts）。
  */
-import { h, bridge, type Bridge } from '../api'
+import { bridge, type Bridge } from '../api'
+import { button, card, h, text } from '../ui'
 import { dashboardWidgets, type DashboardWidgetContext, type DashboardWidget } from './dashboard/widget'
 import './dashboard/widgets/dsh-service'
 import './dashboard/widgets/plugin-overview'
@@ -29,25 +30,20 @@ export function initDashboard(paneEl: HTMLElement, toast: (msg: string, err?: bo
 
   const grid = h('div', { class: 'dash-grid' })
   for (const w of dashboardWidgets()) {
-    const body = h('div', { class: 'dash-widget-body' })
-    const card = h('section', { class: 'card dash-widget', 'data-widget': w.id },
-      h('header', { class: 'dash-widget-head' },
-        h('h3', { class: 'grow' }, document.createTextNode(w.title)),
-        w.refresh ? h('button', {
-          class: 'btn small',
-          onclick: () => {
-            lastRefresh.set(w.id, Date.now())
-            void runRefresh(w, ctx)
-          },
-        }, document.createTextNode('刷新')) : null,
-      ),
-      body,
-    )
-    grid.append(card)
+    const actions = w.refresh
+      ? [button({ size: 'sm', onClick: () => {
+          lastRefresh.set(w.id, Date.now())
+          void runRefresh(w, ctx)
+        } }, text('刷新'))]
+      : []
+    const el = card({ className: 'dash-widget', title: w.title, actions })
+    const body = el.querySelector<HTMLElement>('.card-body')!
+    body.classList.add('dash-widget-body')
+    grid.append(el)
     try {
       w.render(body, ctx)
     } catch (err) {
-      body.append(h('p', { class: 'muted' }, document.createTextNode('初始化失败：' + String(err))))
+      body.append(h('p', { class: 'muted' }, text('初始化失败：' + String(err))))
     }
     lastRefresh.set(w.id, Date.now())
   }

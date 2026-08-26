@@ -82,13 +82,13 @@ flowchart TB
 | 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh Harness 由 `DshPluginInstaller.ts` 策略层分发）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出 | `src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` |
 | Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global 清单 = index.json + 磁盘扫描合并（已有 Skills 直接可见）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
-| 主窗口 | loader 页 / DSH UI 双向导航；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
+| 主窗口 | loader 页 / DSH UI 双向导航；默认 1600×900（可缩放，最小 960×600）；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |
-| 控制面板 | 无边框子窗口，随主窗口隐藏 / 恢复，无任务栏项 | `src/main/windows/control.ts` |
+| 控制面板 | 无边框子窗口（默认 560×680，可缩放，最小 480×520），随主窗口隐藏 / 恢复，无任务栏项 | `src/main/windows/control.ts` |
 | 托盘 | 状态提示 + 菜单（显示主窗口 / 打开控制面板 / 退出）；退出为唯一真实退出通道 | `src/main/tray.ts` |
 | 开机自启 | `app.setLoginItemSettings` 同步开关（便携版指向 exe 真实路径） | `src/main/autostart.ts` |
 | preload 桥 | 按窗口暴露窄桥接：`dshLoader`（文件协议守卫）/ `dshBall` / `dshc` | `src/preload/loader.ts`、`floating.ts`、`control.ts` |
-| 控制面板页面 | 四页签 UI（插件 / 版本 / 日志状态 / 设置），独立初始化 | `src/renderer/control/app.ts` + `tabs/*.ts` |
+| 控制面板页面 | 六页签 UI（仪表盘 / 插件 / Skills / 版本 / 日志与状态 / 设置），独立初始化；页面组件统一走 `control/ui/` 组件库（shadcn/ui 风格令牌，紧凑小号） | `src/renderer/control/app.ts` + `tabs/*.ts` + `ui/*.ts` |
 | 仪表盘 Widget 注册表 | 统一监控模块接口：`DashboardWidget`（id / title / refreshIntervalMs / render / refresh / dispose）+ `registerDashboardWidget`；壳不感知具体监控，新模块仅新增 `tabs/dashboard/widgets/*.ts` 并注册 | `src/renderer/control/tabs/dashboard/widget.ts` + `tabs/dashboard.ts` |
 | 悬浮球页面 | 指针捕获：< 5px 位移视为单击，否则按增量拖动 | `src/renderer/floating/app.ts` |
 | loader 页面 | 准备中旋转、错误 + 重试按钮 | `src/renderer/loader/app.ts` |
@@ -218,7 +218,7 @@ dsh/manager.ts setState()（状态机迁移）
 | 决策 | 选型 | 理由（源码佐证） | 备选方案与排除理由 |
 | --- | --- | --- | --- |
 | 桌面框架 | Electron ^43.4.1 | 需要 spawn 并管理 DSH 的 Node 进程、内置 Node 兜底运行时（`src/main/dsh/nodebin.ts`）、系统托盘 / 登录自启 / 单实例（`tray.ts`、`autostart.ts`、`index.ts`）等原生集成；`package.json` 声明 devDependency | Tauri：仓库内无任何 Rust 代码（无 `Cargo.toml` / `src-tauri/`），且要复用 Node 生态的 npm CLI 与 CDP 调试，选 Electron 与既有代码目标一致 |
-| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | 三个页面（loader / floating / control）均为 DOM 直操作（`src/renderer/control/app.ts` 等），打包为单个 IIFE（`scripts/build.mjs`）；减少依赖面与编译复杂度 | Vue / React：界面规模小、无需响应式组件体系，引入框架反而增加打包体积与维护面 |
+| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | 三个页面（loader / floating / control）均为 DOM 直操作；control 页签使用项目内 `ui/` 组件库（基于 shadcn/ui 设计令牌：Button / Card / Badge / Switch / Segmented / Select / Dialog / Progress / List），打包为单个 IIFE（`scripts/build.mjs`）；减少依赖面与编译复杂度 | Vue / React：界面规模小、无需响应式组件体系，引入框架反而增加打包体积与维护面 |
 | 编译 / 打包 | esbuild ^0.28.2 | `package.json` devDependency；`scripts/build.mjs` 单文件输出 main（CJS/node）、preload、renderer（IIFE/browser） | tsc 直出：需要与 electron-builder 的 asar 打包衔接，esbuild 一步完成 bundle 且无 tree-shaking 负担 |
 | 运行时分发 | 单 tgz 经 extraResources（`build-assets/dsh-runtime.tgz`） | electron-builder 的文件收集器会静默丢弃 `node_modules` 树、静态依赖分析漏掉 peer / 动态加载包（`electron-builder.yml` 注释 + `scripts/fetch-dsh.mjs` 头注释），单包分发 + 首启解压绕开该限制 | asarUnpack 全量解包：不兼容 peer 加载且体积膨胀，已废弃（`README.original.md` 中旧描述，新版打包不再使用） |
 | 解压工具 | Windows 自带 `System32\tar.exe` | Win10 1803+ 内置 bsdtar，用户机零依赖（`src/main/dsh/install.ts` 注释） | Node tar 依赖：便携版与安装版均不应要求额外工具链 |

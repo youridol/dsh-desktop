@@ -1,7 +1,9 @@
 /**
  * 日志与状态：DSH 进程状态卡 + 实时日志滚动。
+ * 布局与组件统一走 control/ui 组件库。
  */
-import { bridge, h, fmtTime, type DshStatus, type LogLine } from '../api'
+import { bridge, type DshStatus, type LogLine } from '../api'
+import { alertDialog, badge, button, card, h, row, text } from '../ui'
 
 let pane: HTMLElement
 let statusBox: HTMLElement
@@ -20,31 +22,35 @@ const stateLabels: Record<DshStatus['state'], string> = {
   error: '错误',
 }
 
+function stateBadge(state: DshStatus['state']): HTMLElement {
+  const variant = state === 'running' ? 'ok' : state === 'starting' || state === 'stopping' ? 'warn' : 'err'
+  return badge(stateLabels[state] ?? state, variant)
+}
+
 export function initStatus(paneEl: HTMLElement): void {
   pane = paneEl
   pane.innerHTML = ''
 
-  statusBox = h('div', { class: 'card' })
-  const actions = h('div', { class: 'row', style: 'margin-top:10px' },
-    h('button', { class: 'btn primary', onclick: () => void ctl('restart') }, document.createTextNode('重启')),
-    h('button', { class: 'btn', onclick: () => void ctl('stop') }, document.createTextNode('停止')),
-    h('button', { class: 'btn', onclick: () => void ctl('start') }, document.createTextNode('启动')),
-    h('button', {
-      class: 'btn',
-      onclick: () => void openInBrowser(),
-    }, document.createTextNode('在浏览器打开')),
+  const statusCard = card(
+    { title: 'DSH 服务' },
+    h('div', { id: 'statusBody' }),
+  )
+  statusBox = statusCard.querySelector<HTMLElement>('#statusBody')!
+
+  const actions = row(
+    button({ variant: 'primary', size: 'sm', onClick: () => void ctl('restart') }, text('重启')),
+    button({ size: 'sm', onClick: () => void ctl('stop') }, text('停止')),
+    button({ size: 'sm', onClick: () => void ctl('start') }, text('启动')),
+    button({ size: 'sm', onClick: () => void openInBrowser() }, text('在浏览器打开')),
   )
 
-  const logCard = h('div', { class: 'card', style: 'display:flex;flex-direction:column;min-height:0;flex:1' })
-  const logHead = h('div', { class: 'row' },
-    h('h3', { class: 'grow', style: 'margin:0' }, document.createTextNode('日志')),
-    h('button', { class: 'btn small', onclick: () => void bridge().clearLogs() }, document.createTextNode('清空')),
+  const logCard = card(
+    { title: '日志', actions: [button({ size: 'sm', onClick: () => void bridge().clearLogs() }, text('清空'))] },
+    h('div', { id: 'logView' }),
   )
-  logView = h('div', { id: 'logView' })
-  logCard.append(logHead, logView)
+  logView = logCard.querySelector<HTMLElement>('#logView')!
 
-  const layout = h('div', { style: 'display:flex;flex-direction:column;height:100%;gap:0' }, statusBox, actions, logCard)
-  pane.append(layout)
+  pane.append(statusCard, actions, logCard)
 
   logView.addEventListener('scroll', () => {
     autoScroll = logView.scrollTop + logView.clientHeight >= logView.scrollHeight - 30
@@ -57,12 +63,8 @@ async function bootstrap(): Promise<void> {
   const initial = await bridge().subscribeLogs()
   for (const line of initial) appendLine(line, false)
   flush()
-  bridge().on('logs:line', (payload) => {
-    queueLine(payload as LogLine)
-  })
-  bridge().on('logs:cleared', () => {
-    logView.innerHTML = ''
-  })
+  bridge().on('logs:line', (payload) => queueLine(payload as LogLine))
+  bridge().on('logs:cleared', () => { logView.innerHTML = '' })
   bridge().on('dsh:status', (payload) => renderStatus(payload as DshStatus))
   const state = await bridge().getState()
   renderStatus(state.status)
@@ -74,7 +76,7 @@ async function ctl(action: 'start' | 'stop' | 'restart'): Promise<void> {
     else if (action === 'stop') await bridge().stop()
     else await bridge().restart()
   } catch (err) {
-    alert(String(err))
+    await alertDialog({ title: '操作失败', message: String(err) })
   }
 }
 
@@ -83,37 +85,26 @@ async function openInBrowser(): Promise<void> {
   window.open(s.status.serviceUrl, '_blank')
 }
 
-function stateBadge(state: DshStatus['state']): HTMLElement {
-  const cls = state === 'running' ? 'ok' : state === 'starting' || state === 'stopping' ? 'warn' : 'err'
-  return h('span', { class: `badge ${cls}` }, document.createTextNode(stateLabels[state] ?? state))
-}
-
 function renderStatus(s: DshStatus): void {
-  statusBox.innerHTML = ''
+  statusBox.replaceChildren()
   const uptime = s.startedAt && s.state === 'running'
     ? `${Math.floor((Date.now() - s.startedAt) / 1000)} s`
     : '—'
   statusBox.append(
-    h('div', { class: 'row' },
-      h('h3', { class: 'grow', style: 'margin:0' }, document.createTextNode('DSH 服务'), stateBadge(s.state)),
-    ),
-    h('div', { class: 'kv', style: 'margin-top:10px' },
-      h('div', { class: 'k' }, document.createTextNode('地址')),
-      h('div', { class: 'mono' }, document.createTextNode(s.serviceUrl)),
-      h('div', { class: 'k' }, document.createTextNode('端口')),
-      h('div', { class: 'mono' }, document.createTextNode(String(s.port))),
-      h('div', { class: 'k' }, document.createTextNode('版本')),
-      h('div', { class: 'mono' }, document.createTextNode(s.version === 'bundled' ? '捆绑版本' : s.version)),
-      h('div', { class: 'k' }, document.createTextNode('PID')),
-      h('div', { class: 'mono' }, document.createTextNode(s.pid ? String(s.pid) : '—')),
-      h('div', { class: 'k' }, document.createTextNode('已运行')),
-      h('div', { class: 'mono' }, document.createTextNode(uptime)),
-      h('div', { class: 'k' }, document.createTextNode('已启用插件')),
-      h('div', { class: 'mono' }, document.createTextNode(s.enabledPlugins.length ? s.enabledPlugins.join(', ') : '无')),
+    row(stateBadge(s.state)),
+    h('div', { class: 'kv', style: 'margin-top:8px' },
+      ...kvEntries([
+        ['地址', s.serviceUrl],
+        ['端口', String(s.port)],
+        ['版本', s.version === 'bundled' ? '捆绑版本' : s.version],
+        ['PID', s.pid ? String(s.pid) : '—'],
+        ['已运行', uptime],
+        ['已启用插件', s.enabledPlugins.length ? s.enabledPlugins.join(', ') : '无'],
+      ]),
     ),
   )
   if (s.detail && s.state !== 'running') {
-    statusBox.append(h('p', { class: 'muted', style: 'margin:10px 0 0' }, document.createTextNode(s.detail)))
+    statusBox.append(h('p', { class: 'muted', style: 'margin:8px 0 0' }, text(s.detail)))
   }
 }
 
@@ -131,16 +122,29 @@ function flush(): void {
   const batch = pending
   pending = []
   for (const line of batch) appendLine(line, true)
-  // Keep the DOM bounded.
   while (logView.childElementCount > 2000) logView.firstElementChild?.remove()
   if (autoScroll) logView.scrollTop = logView.scrollHeight
 }
 
 function appendLine(line: LogLine, animate: boolean): void {
   const el = h('div', { class: `log-line ${line.level}` },
-    h('span', { class: 'src' }, document.createTextNode(`${fmtTime(line.ts)} [${line.source}]`)),
-    h('span', { class: 'txt' }, document.createTextNode(line.text)),
+    h('span', { class: 'src' }, text(`${fmtTime(line.ts)} [${line.source}]`)),
+    h('span', { class: 'txt' }, text(line.text)),
   )
   if (!animate) el.style.opacity = '0.75'
   logView.append(el)
+}
+
+function fmtTime(ts: number): string {
+  const d = new Date(ts)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function kvEntries(entries: Array<[string, string]>): HTMLElement[] {
+  const out: HTMLElement[] = []
+  for (const [k, v] of entries) {
+    out.push(h('div', { class: 'k' }, text(k)), h('div', { class: 'mono' }, text(v)))
+  }
+  return out
 }

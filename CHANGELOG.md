@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### 重构（控制面板 UI 统一与 Skills 概览修复）
+
+- **Skills 概览数据修复**：概览卡片改为随数据刷新重渲染，不再停留在初始化占位符；展示仓库 / 已安装 / 全局 / 项目 / 备份统计与全部路径（Skills 目录、仓库缓存、全局目录、项目目录、备份目录、Agents Home、默认仓库），不遗漏、不截断。
+- **Skills 页签布局重构**：按功能分组为「概览 · 仓库 · 已安装 · GitHub 搜索 · 备份与迁移」，相关卡片横向并排（响应式 `skills-cols` 网格），移除空壳卡片与冗余留白。
+- **shadcn/ui 风格统一**：新增 `src/renderer/control/ui/` 组件库（Button / Card / Badge / Switch / Segmented / Select / Dialog / Progress / List，紧凑小号设计令牌），控制面板全部页签（仪表盘 / 插件 / Skills / 版本 / 日志与状态 / 设置）及其 Widget 统一迁移，原生 `confirm`/`alert` 替换为自定义 Dialog。
+- **主窗口默认尺寸**：主窗口默认 1600×900（保持可缩放，最小 960×600），控制面板其余窗口行为不变。
+
 ## [v0.7.1] - 2026-08-26
 
 ### 修复（Skills 管理页对接 deepseek-harness Agents/Skills）

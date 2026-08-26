@@ -268,30 +268,4 @@ export function bridge(): Bridge {
 
 /* ---- tiny dom helpers ---- */
 
-export function h(
-  tag: string,
-  attrs: Record<string, string | boolean | EventListener> = {},
-  ...children: Array<Node | null | undefined>
-): HTMLElement {
-  const el = document.createElement(tag)
-  for (const [k, v] of Object.entries(attrs)) {
-    if (typeof v === 'function') el.addEventListener(k.replace(/^on/, ''), v as EventListener)
-    else if (typeof v === 'boolean') { if (v) el.setAttribute(k, '') }
-    else el.setAttribute(k, v)
-  }
-  for (const child of children) if (child) el.append(child)
-  return el
-}
-
-export function fmtTime(ts: number): string {
-  const d = new Date(ts)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-export function fmtBytes(n: number): string {
-  if (n > 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`
-  if (n > 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`
-  if (n > 1e3) return `${(n / 1e3).toFixed(0)} KB`
-  return `${n} B`
-}
+export { h } from './ui/element'

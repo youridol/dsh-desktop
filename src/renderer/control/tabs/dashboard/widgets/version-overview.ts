@@ -1,29 +1,25 @@
 /**
- * 版本概览 Widget。
- *
- * 复用 app:getState 返回的当前 DSH 版本 / 桌面壳版本 / 本机已装版本列表，
- * 汇总为指标卡并提供跳转到版本管理页的入口。版本检测、下载与切换逻辑仍在
- * 版本页，本 Widget 不重复实现。
+ * 版本概览 Widget：复用 app:getState 返回的当前 DSH 版本、桌面壳版本与本机已装
+ * 版本列表，汇总为指标卡并提供跳转到版本管理页的入口。版本检测、下载与切换
+ * 逻辑仍在版本页，本 Widget 不重复实现。
  */
-import { h, type AppState } from '../../../api'
+import { type AppState } from '../../../api'
+import { button, kv, row, text } from '../../../ui'
 import { registerDashboardWidget, type DashboardWidgetContext } from '../widget'
 
 let host: HTMLElement | null = null
 
 function renderWidget(s: AppState): void {
   if (!host) return
-  host.innerHTML = ''
-  host.append(
-    h('div', { class: 'kv' },
-      h('div', { class: 'k' }, document.createTextNode('当前 DSH')),
-      h('div', { class: 'mono' }, document.createTextNode(s.versionLabel)),
-      h('div', { class: 'k' }, document.createTextNode('桌面壳版本')),
-      h('div', { class: 'mono' }, document.createTextNode(s.appVersion)),
-      h('div', { class: 'k' }, document.createTextNode('本机已装')),
-      h('div', { class: 'mono' }, document.createTextNode(`${s.versions.length} 个版本`)),
+  host.replaceChildren(
+    kv([
+      ['当前 DSH', s.versionLabel],
+      ['桌面壳版本', s.appVersion],
+      ['本机已装', `${s.versions.length} 个版本`],
+    ]),
+    row(
+      button({ size: 'sm', onClick: () => goTab('versions') }, text('版本管理')),
     ),
-    h('div', { class: 'row', style: 'margin-top:8px' },
-      h('button', { class: 'btn small', onclick: () => goTab('versions') }, document.createTextNode('版本管理'))),
   )
 }
 

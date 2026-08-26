@@ -21,8 +21,8 @@ export function getMainWindow(): BrowserWindow | null {
 
 export function createMainWindow(): BrowserWindow {
   win = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: 1600,
+    height: 900,
     minWidth: 960,
     minHeight: 600,
     show: false,

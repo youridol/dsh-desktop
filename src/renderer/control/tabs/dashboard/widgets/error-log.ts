@@ -1,11 +1,10 @@
 /**
- * 异常与错误 Widget。
- *
- * 复用既有日志总线（logs:subscribe / logs:line / logs:cleared 事件），仅保留
- * 最近错误 / 警告并汇总展示，提供「清空日志」与「查看日志」入口。不复制日志
- * 页的滚动查看逻辑。
+ * 异常与错误 Widget：复用日志总线（logs:subscribe / logs:line / logs:cleared），
+ * 仅保留最近错误 / 警告并汇总展示，提供「清空日志」与「查看日志」入口。
+ * 滚动查看逻辑仍在日志页，本 Widget 不重复实现。
  */
-import { h, type LogLine } from '../../../api'
+import { type LogLine } from '../../../api'
+import { button, h, row, statCount, text } from '../../../ui'
 import { registerDashboardWidget, type DashboardWidgetContext } from '../widget'
 
 const MAX_LINES = 200
@@ -22,21 +21,6 @@ function pushLines(incoming: LogLine[]): void {
   if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES)
 }
 
-function stat(label: string, value: number, cls: string): HTMLElement {
-  return h('div', {},
-    h('div', { class: `dash-count ${cls}` }, document.createTextNode(String(value))),
-    h('div', { class: 'muted' }, document.createTextNode(label)),
-  )
-}
-
-function lineEl(l: LogLine): HTMLElement {
-  const label = l.level === 'error' ? '错误' : '警告'
-  return h('div', { class: `log-line ${l.level}` },
-    h('span', { class: 'src' }, document.createTextNode(label)),
-    h('span', { class: 'txt mono' }, document.createTextNode(l.text.slice(0, 140))),
-  )
-}
-
 function renderWidget(): void {
   if (!host) return
   const problems = lines.filter((l) => l.level === 'error' || l.level === 'warn')
@@ -44,27 +28,34 @@ function renderWidget(): void {
   const warns = problems.length - errors.length
   const shown = problems.slice(-MAX_SHOWN)
 
-  host.innerHTML = ''
-  host.append(
-    h('div', { class: 'row', style: 'gap:18px' },
-      stat('错误', errors.length, errors.length ? 'err' : ''),
-      stat('警告', warns, warns ? 'warn' : ''),
+  host.replaceChildren(
+    row(
+      statCount('错误', errors.length, errors.length ? 'err' : ''),
+      statCount('警告', warns, warns ? 'warn' : ''),
     ),
   )
   if (problems.length === 0) {
-    host.append(h('p', { class: 'muted', style: 'margin-top:6px' }, document.createTextNode('最近无异常')))
+    host.append(text('最近无异常'))
   } else {
-    const list = h('div', { class: 'dash-mini-list', style: 'margin-top:6px' })
+    const list = h('div', { class: 'dash-mini-list' })
     for (const l of shown) list.append(lineEl(l))
     if (problems.length > MAX_SHOWN) {
-      list.append(h('p', { class: 'muted' }, document.createTextNode(`… 其余 ${problems.length - MAX_SHOWN} 条见日志页`)))
+      list.append(h('p', { class: 'muted' }, text(`… 其余 ${problems.length - MAX_SHOWN} 条见日志页`)))
     }
     host.append(list)
   }
-  host.append(h('div', { class: 'row', style: 'margin-top:8px' },
-    h('button', { class: 'btn small', onclick: () => void clearLogs() }, document.createTextNode('清空日志')),
-    h('button', { class: 'btn small', onclick: () => goTab('status') }, document.createTextNode('查看日志')),
+  host.append(row(
+    button({ size: 'sm', onClick: () => void clearLogs() }, text('清空日志')),
+    button({ size: 'sm', onClick: () => goTab('status') }, text('查看日志')),
   ))
+}
+
+function lineEl(l: LogLine): HTMLElement {
+  const label = l.level === 'error' ? '错误' : '警告'
+  return h('div', { class: `log-line ${l.level}` },
+    h('span', { class: 'src' }, text(label)),
+    h('span', { class: 'txt mono' }, text(l.text.slice(0, 140))),
+  )
 }
 
 async function clearLogs(): Promise<void> {
