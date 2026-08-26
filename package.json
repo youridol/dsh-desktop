@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "DeepSeek Harness (DSH) desktop shell — bundles the DSH Web UI in an Electron window with floating-ball control panel, plugin/version management, tray and auto-start.",
   "main": "dist/main.js",
   "repository": {
@@ -24,10 +24,14 @@
     "dist:zip": "electron-builder --win zip --x64 -c.directories.output=release/zip"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.3.0",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.1"
   }
 }

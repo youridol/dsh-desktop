@@ -6,6 +6,15 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 
 项目不改动 DSH 源码，插件能力经 dsh harness 上游插件机制（`dsh plugin --profile web`，npm/pnpm 包）管理并挂载到 Web profile，Skills 为桌面端自管理的仓库/作用域/备份体系，桌面端仅做 CLI 调用方与 UI 封装，细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+## 与 deepseek-harness 的关系（完全放行）
+
+dsh-desktop 对 deepseek-harness 采取**完全放行、行为优先**原则：
+
+- **零限制**：不对 harness 的安装 / 执行 / 构建 / 插件 / Web UI 操作设置任何拦截、限制、沙箱、安全保护或二次阻断；命令层完整透传环境与参数（`DshCommandExecutor` / `manager` / `install` 均以数组参数直传，不注入 `ignore-scripts` 或任何限制性环境变量）。
+- **行为优先**：主窗口承载 DSH Web UI 时不拦截弹窗 / 新窗口（`window.open` 由 harness 自身原生决定）；仅使用 harness 官方 CLI 选项（如 `--no-open`，壳层内嵌 UI 的标准集成方式）与僵死进程看门狗超时，均不构成对 harness 行为的限制。
+- **不修改上游**：从不改写 deepseek-harness 源码 / 配置；唯一写入的是 dsh-desktop 自身管理的 Profile 策略文件（如 pnpm `allowBuilds`），目的是**解除** pnpm 默认的构建脚本拦截，让安装 / 构建照常进行。
+- **输入护栏**：控制面板的插件名 / Profile 输入校验（拒绝 shell 元字符、镜像 harness 自身 profile 名校验）只保护 dsh-desktop 自己的 UI 输入，不对 harness 行为设限。
+
 ## 功能特性
 
 - **冷启动即用**：双击启动后自动拉起捆绑的 DSH 服务（`dsh web --no-open --port …`，见 `src/main/dsh/manager.ts`），主窗口在服务就绪后自动加载 Web UI；10 秒内未就绪显示错误页与重试按钮（`READY_TIMEOUT_MS`，`src/main/dsh/manager.ts`）。
@@ -19,6 +28,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
   - 导出 / 导入 / 备份 / 恢复，导入时校验格式、版本、路径与冲突（`test/skills-service.test.mjs` 覆盖核心逻辑）。
 - **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh）与 Profile 作为元数据写入 manifest 并展示在列表中：
   - 安装方式可选 npm / npx / dsh：npm 与 npx 默认安装到 `web` profile，dsh 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），不自行 git clone / npm install / 下载 tarball；
+  - 插件名可填 GitHub / git 地址（`github:owner/repo`、`https://github.com/...` 等）；pnpm 拦截构建脚本时可一键「放行构建脚本并重试」（真实写入 Profile 的 `pnpm-workspace.yaml` `allowBuilds` 并自动重装，详见下文「插件安装来源」）；
   - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
   - 来源识别：插件列表用标签展示「来源：npm / npx / dsh」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。
@@ -28,7 +38,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 
 ## 插件安装来源
 
-dsh-desktop 的插件全部是 npm registry 包，安装统一经 dsh harness 的原生插件通道执行：
+dsh-desktop 的插件安装统一经 dsh harness 的原生插件通道执行（npm registry 包，或 GitHub / git 安装地址）：
 
 ```bash
 dsh plugin --profile <profile> add <plugin>
@@ -50,7 +60,9 @@ dsh plugin --profile web add dshmarket
 
 安装后元数据（来源 + Profile + 安装时间）写入 profile manifest 的 `dsh.desktop.plugins`；插件列表以标签展示「来源：npm / npx / dsh」与「Profile：<名称>」。卸载按记录中的 Profile 路由到对应 `dsh plugin --profile <profile> remove`，启用 / 禁用同样作用于记录中的 Profile。旧版本已安装的插件没有来源记录，默认按 `dsh` / `web` 兼容显示与操作。
 
-通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh）→ 填写插件名称（dsh 时还需填写 Profile，如 `web`）→ 点击安装。「dsh」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
+通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh）→ 填写插件名称或 GitHub/git 地址（dsh 时还需填写 Profile，如 `web`）→ 点击安装。「dsh」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
+
+**GitHub / git 插件安装**：插件名可直接填 `github:owner/repo`、`https://github.com/owner/repo`、`git+https://...` 等 pnpm 支持的 git 安装地址，由 `dsh plugin --profile <profile> add <spec>` 转发。pnpm（≥10）默认出于供应链安全拒绝依赖构建脚本（如 GitHub 插件的 `prepare`，报 `build scripts are blocked by pnpm by default` / `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），此时控制面板会弹出「放行构建脚本并重试」：确认后 dsh-desktop 将 pnpm 打印的精确包 spec 写入该 Profile 的 `pnpm-workspace.yaml` `allowBuilds`（并同步 `pnpm.onlyBuiltDependencies` 兼容 pnpm 9 / pnpm 10 ≤ 10.25），随后自动重新安装 / 构建——授权是真实策略写入并立即重试，不是仅修改 UI 状态；该放行记录会持久化，后续更新同一插件不再被拦截。dsh-desktop 只操作 Profile 策略文件，不修改 `deepseek-harness` 上游代码，也不对 Harness 安装 / 执行 / 构建 / 插件操作设置任何额外拦截、沙箱或二次阻断。
 
 ## 技术栈
 
@@ -62,6 +74,7 @@ dsh plugin --profile web add dshmarket
 | 打包工具 | electron-builder | ^26.15.3 | `package.json`、`electron-builder.yml` |
 | 包管理器 | npm（lockfile 版本 3） | ≥ 20（CI 用 22） | `package-lock.json`、`.github/workflows/build-and-release.yml` |
 | 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | — | `src/renderer/`、`scripts/build.mjs` |
+| 运行时依赖（bundled） | `js-yaml`（pnpm-workspace.yaml 策略解析，esbuild 打入 `dist/main.js`，打包产物无运行时 node_modules） | ^4.3 | `package.json` `dependencies`、`src/main/services/dsh/pnpmBuildPolicy.ts` |
 | 捆绑运行时 | `@deepseek-ai/dsh` + 内置 npm CLI | 随上游 Release | `scripts/fetch-dsh.mjs` |
 | 许可证 | MIT | — | `LICENSE`、`package.json` |
 
@@ -140,6 +153,7 @@ DSH 服务由主进程 spawn（`dsh web --no-open --port <n>`），插件经 Web
 - **检查更新提示 GitHub 限流（403）**：匿名 API 限额耗尽。在设置页配置 GitHub 凭据后重试（`src/main/dsh/releases.ts` 的 `authHeaders`）。
 - **便携版更新（切换版本）后"版本缺失"**：运行数据与 exe 同目录，整体移动目录后仍完整；若运行目录被清理，应用自动回退到捆绑版本并提示（`src/main/dsh/manager.ts` 的 `start`）。
 - **插件无法加载**：确认插件是 npm 包且声明了 `dsh.bundle`（否则 dsh 只当普通依赖安装）；安装后点击"应用并重启 DSH"使其挂载（插件状态以 `$DSH_HOME/profiles/web/package.json` 的 `dsh.profile.bundles` 为准）。
+- **GitHub 插件安装报「build scripts are blocked by pnpm by default」**：pnpm（≥10）默认拒绝依赖构建脚本（GitHub 插件的 `prepare`）。控制面板会弹出「放行构建脚本并重试」，确认后 dsh-desktop 将该包的精确 spec 写入该 Profile 的 `pnpm-workspace.yaml` `allowBuilds`（并同步 `pnpm.onlyBuiltDependencies` 兼容 pnpm 9 / 10 ≤ 10.25）并自动重新安装；放行记录持久化，后续更新同一插件不再被拦截。
 - **凭据保存在哪里**：仅存于运行目录 `credentials.json`（明文），`.gitignore` 已排除；卸载安装版需手动删除 `%APPDATA%\DSH Desktop\` 中的凭据文件。
 - **需要不同 DSH 版本**：版本页"检查更新 → 下载并切换"；可回退到任意已安装版本或捆绑版本（`src/main/versions.ts` 的 `switchTo`）。
 

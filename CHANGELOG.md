@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.8.3] - 2026-08-27
+
+### 完全放行（对 deepseek-harness 零限制）
+
+- **机制层完全放行**：主窗口（承载 DSH Web UI）移除 `setWindowOpenHandler` 弹窗拦截，`window.open` / 新窗口由 deepseek-harness 自身行为原生决定（应用内打开），dsh-desktop 不再对 harness 的任何行为设置限制、拦截、否决或重定向；`dsh web --no-open` 为 harness 官方 CLI 选项（壳层内嵌 UI 的标准集成方式），超时仅作僵死进程看门狗，均不构成对 harness 行为的限制。
+- **输入护栏与 harness 行为边界**：控制面板的插件名 / Profile 输入校验（拒绝 shell 元字符、镜像 harness 自身 profile 名校验）仅保护 dsh-desktop 自己的 UI 输入，不对 deepseek-harness 行为设限；harness 的安装 / 执行 / 构建 / 插件 / Web UI 操作全部直通、以其自身行为优先。
+
+### 修复（pnpm 构建脚本拦截 / GitHub 插件安装）
+
+- **pnpm 构建脚本拦截可真实放行并自动重装**：GitHub / git 插件经 `dsh plugin --profile <profile> add <spec>` 安装时，pnpm（≥10）默认拒绝依赖构建脚本（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` / `build scripts are blocked by pnpm by default`），安装失败。现新增「放行构建脚本并重试」流程：
+  - 安装失败时识别 pnpm 构建脚本拦截并解析 pnpm 打印的精确包 spec（`src/main/services/dsh/pnpmBuildPolicy.ts`，识别 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` / `ERR_PNPM_IGNORED_BUILDS` / `Ignored build scripts` / `blocked by pnpm by default` 等信号）；
+  - 控制面板插件页在构建脚本被拦截时弹出确认框，点击「放行构建脚本并重试」将拦截包写入该 Profile 的 `pnpm-workspace.yaml` `allowBuilds`（pnpm 11 / pnpm ≥ 10.26 机制）与 `package.json` `pnpm.onlyBuiltDependencies`（pnpm 9 / pnpm 10 ≤ 10.25 兼容），随后自动重新执行安装；授权是真实策略写入，非仅 UI 状态；
+  - 插件名校验支持 GitHub/git 安装地址（`github:owner/repo`、`https://github.com/...`、`git+...` 等），npm 包名与原有安全校验（拒绝 shell 元字符）保持不变；git 安装按 manifest 依赖 diff 映射回真实包名展示。
+- 不修改 `deepseek-harness` 上游代码：仅操作 dsh-desktop 自身管理的 Profile 策略文件，dsh 安装 / 执行 / 构建 / 插件操作全部直通，无额外拦截、沙箱或二次阻断。
+
+### 验证
+
+- `test/pnpm-build-policy.test.mjs` 新增 9 个用例（信号识别、`allowBuilds` spec 与包名解析、workspace/manifest 授权合并、幂等）；`test/plugin-service.test.mjs` 新增构建拦截抛出与「授权后自动重试并持久化」用例；`npm run typecheck`、`npm run build` 与全部 119 项测试通过。
+- 真实 dsh CLI 端到端验证：首次 `dsh plugin add <git-spec>` 被 pnpm 拦截 → 解析出精确 spec → 授权 → 重试 exit 0 且 `prepare` 构建产物落盘。
+- 全量审计确认：dsh-desktop 对 harness 无任何二次拦截（无 `ignore-scripts` / 限制性环境变量 / webRequest / 权限处理器 / 弹窗拦截），命令层完整透传环境与参数。
+- 文档规范化：README、README.original（历史存档标注）、docs/ARCHITECTURE、docs/CONTRIBUTING、docs/DEPLOYMENT 与 CHANGELOG 统一至 v0.8.3。
 ## [v0.8.2] - 2026-08-27
 
 ### 修复（控制面板与悬浮球自愈）

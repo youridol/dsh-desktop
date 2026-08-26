@@ -56,7 +56,7 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
       ),
     ),
     row(
-      nameInputEl = inputEl({ type: 'text', placeholder: '插件名称，如 dshmarket 或 @scope/plugin', width: 220 }),
+      nameInputEl = inputEl({ type: 'text', placeholder: '插件名称或 GitHub 地址，如 dshmarket / @scope/plugin / github:owner/repo', width: 280 }),
       profileRowEl = h('div', { class: 'row' },
         text('Profile：'),
         profileInputEl = inputEl({ type: 'text', placeholder: 'Profile 名称，如 web', width: 100 }),
@@ -168,6 +168,32 @@ async function exportPlugin(p: PluginView): Promise<void> {
   }
 }
 
+/** Build the confirm dialog body listing the packages pnpm wants allowlisted. */
+function buildBlockedMessage(result: { keys: string[]; names: string[] }): HTMLElement {
+  const detail = [...result.keys, ...result.names]
+  return h('div', {},
+    h('p', {}, text('pnpm 默认阻止依赖运行构建脚本（如 GitHub 插件的 prepare），导致安装失败。')),
+    h('p', {}, text('点击「放行构建脚本并重试」会将以下包写入本机 Profile 的 pnpm 构建白名单，并自动重新安装：')),
+    h('div', { class: 'mono' }, ...(detail.length > 0 ? detail.map((k) => h('div', {}, text(k))) : [text('（未识别到具体包名，将直接重试）')])),
+  )
+}
+
+/** Shared success handling for the first attempt and the allow-builds retry. */
+function finishInstall(
+  name: string,
+  source: PluginInstallSource,
+  profile: string,
+  installed: PluginView[],
+): void {
+  if (installed.length === 0) {
+    toastFn(`安装完成，但列表未显示 ${name}（可能安装到了其他 Profile），请检查`, true)
+    return
+  }
+  toastFn(`已安装插件 ${name}（${sourceLabel(source)}${source === 'dsh-profile' ? ` · Profile：${profile}` : ''}），点击「应用并重启 DSH」生效`)
+  nameInputEl.value = ''
+  void refresh()
+}
+
 async function installPlugin(): Promise<void> {
   const name = nameInputEl.value.trim()
   const profile = profileInputEl.value.trim()
@@ -183,14 +209,28 @@ async function installPlugin(): Promise<void> {
     source === 'dsh-profile' ? { name, source, profile } : { name, source }
   nameInputEl.disabled = true
   try {
-    const installed = await bridge().addPlugin(opts)
-    if (installed.length === 0) {
-      toastFn(`安装完成，但列表未显示 ${name}（可能安装到了其他 Profile），请检查`, true)
+    const result = await bridge().addPlugin(opts)
+    if (result.status === 'build-blocked') {
+      const allow = await confirmDialog({
+        title: '构建脚本被 pnpm 拦截',
+        message: buildBlockedMessage(result),
+        confirmLabel: '放行构建脚本并重试',
+        cancelLabel: '取消',
+        width: 560,
+      })
+      if (!allow) {
+        toastFn('已取消安装（未修改任何构建策略）', true)
+        return
+      }
+      const retried = await bridge().addPlugin({ ...opts, allowBuilds: true })
+      if (retried.status === 'build-blocked') {
+        toastFn(`放行构建脚本后仍被拦截：${retried.message}`, true)
+        return
+      }
+      finishInstall(name, source, profile, retried.plugins)
       return
     }
-    toastFn(`已安装插件 ${name}（${sourceLabel(source)}${source === 'dsh-profile' ? ` · Profile：${profile}` : ''}），点击「应用并重启 DSH」生效`)
-    nameInputEl.value = ''
-    await refresh()
+    finishInstall(name, source, profile, result.plugins)
   } catch (err) {
     toastFn(`安装失败：${String(err)}`, true)
   } finally {

@@ -13,16 +13,18 @@
  * metadata existed fall back to source `dsh-profile` + profile `web`.
  */
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execDsh, type ExecResult } from './DshCommandExecutor'
 import {
   runInstall,
   validationError,
+  isBuildBlockedError,
   DEFAULT_PROFILE,
   type InstallPluginOptions,
   type PluginInstallSource,
 } from './DshPluginInstaller'
+import { authorizeBuildScripts } from './pnpmBuildPolicy'
+import { resolveProfileDir, resolveProfileManifestPath } from './profilePaths'
 import { appLog } from '../../logger'
 
 // ---- types ----
@@ -68,13 +70,12 @@ const LEGACY_PROFILE = DEFAULT_PROFILE
 
 /** Absolute path to the web profile directory (the one dsh-desktop manages). */
 function profileDir(): string {
-  const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
-  return path.join(home, 'profiles', DEFAULT_PROFILE)
+  return resolveProfileDir(DEFAULT_PROFILE)
 }
 
 /** Absolute path to the profile manifest (package.json). */
 function profileManifestPath(): string {
-  return path.join(profileDir(), 'package.json')
+  return resolveProfileManifestPath(DEFAULT_PROFILE)
 }
 
 // ---- manifest helpers ----
@@ -138,15 +139,37 @@ function saveInstallRecord(name: string, source: PluginInstallSource, profile: s
 
 const VALID_PLUGIN_NAME = /^@?[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$/
 
-/** Validate a plugin name: alphanumeric, hyphens, dots, slashes (scoped), no shell metacharacters. */
+/**
+ * Git / GitHub install specs pnpm understands, passed through to
+ * `dsh plugin --profile <p> add <spec>` verbatim (e.g. GitHub plugin
+ * installs). Everything is forwarded as a single argument array — never a
+ * shell string — so only whitespace and shell metacharacters are unsafe.
+ */
+const GIT_SPEC_PREFIX = /^(?:github:|gitlab:|git\+|git:\/\/|git@|https?:\/\/)/i
+
+/** True when the input looks like a git install spec rather than a name. */
+function isGitSpec(trimmed: string): boolean {
+  return GIT_SPEC_PREFIX.test(trimmed) || /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(?:#|$)/.test(trimmed)
+}
+
+/**
+ * Validate a plugin name or git/GitHub install spec: alphanumerics, hyphens,
+ * dots, slashes (scoped) for npm packages; git specs (`github:owner/repo`,
+ * `https://github.com/...`, `git+https://...`, ...) pass through to pnpm.
+ * Shell metacharacters and whitespace are always rejected.
+ */
 export function validatePluginName(name: string): string | null {
   const trimmed = name.trim()
   if (!trimmed) return '插件名称不能为空'
   if (trimmed.length > 214) return '插件名称过长'
+  // Common shell metacharacters are never allowed, whatever the form. `#` is
+  // safe with array args and is pnpm's git ref separator, so it stays.
+  if (/[;|&$(){}[\]]<>'"!~]/.test(trimmed)) return '插件名称包含非法字符'
+  if (isGitSpec(trimmed)) {
+    return /\s/.test(trimmed) ? '插件名称包含非法字符' : null
+  }
   if (!VALID_PLUGIN_NAME.test(trimmed))
-    return '插件名称包含非法字符（仅允许字母、数字、连字符、点、斜杠、@）'
-  // Reject common shell metacharacters
-  if (/[;|&$(){}[\]]<>'"!#~]/.test(trimmed)) return '插件名称包含非法字符'
+    return '插件名称包含非法字符（仅允许字母、数字、连字符、点、斜杠、@，或 GitHub/git 地址）'
   return null
 }
 
@@ -218,21 +241,21 @@ export function listPlugins(): PluginListResult {
   return { plugins, profileDir: dir }
 }
 
-/**
- * Install a plugin by its declared source. The source picks the install
- * strategy; name and profile are validated up front. On success the install
- * record (source + profile + time) is persisted and the list refreshed.
- *
- * @throws PluginInstallError on failure — never writes a success record.
- * @param options install request (source selects the strategy in the
- *   installer layer)
- * @param executor override for tests; defaults to the real dsh executor.
- */
-export async function installPlugin(
+/** Install controls for installPlugin (kept separate from the plugin request). */
+export interface InstallPluginRunOptions {
+  /** Authorize pnpm-blocked build scripts and retry once on failure. */
+  allowBuilds?: boolean
+}
+
+/** Run the install and persist metadata on success (shared by retries). */
+async function installAndPersist(
   options: InstallPluginOptions,
-  executor?: typeof execDsh,
+  executor: typeof execDsh,
 ): Promise<PluginView[]> {
-  const result = await runInstall(options, validatePluginName, executor ?? execDsh)
+  // Dependency diff lets git/GitHub specs (which resolve to the package's
+  // real name in the manifest) map back to the installed plugin rows.
+  const before = new Set(Object.keys(readManifest().dependencies ?? {}))
+  const result = await runInstall(options, validatePluginName, executor)
 
   if (!result.ok) {
     const detail = result.error || result.stderr || `退出码 ${result.exitCode}`
@@ -242,8 +265,49 @@ export async function installPlugin(
   const profile = options.profile ?? DEFAULT_PROFILE
   saveInstallRecord(options.name, options.source, profile)
 
+  const after = new Set(Object.keys(readManifest().dependencies ?? {}))
+  const added = [...after].filter((dep) => !before.has(dep))
+  const names = added.length > 0 ? added : [options.name]
   const { plugins } = listPlugins()
-  return plugins.filter((p) => p.packageName === options.name)
+  return plugins.filter((p) => names.includes(p.packageName))
+}
+
+/**
+ * Install a plugin by its declared source. The source picks the install
+ * strategy; name and profile are validated up front. On success the install
+ * record (source + profile + time) is persisted and the list refreshed.
+ *
+ * When pnpm refuses dependency build scripts (git/GitHub plugins' prepare,
+ * registry postinstall), `runInstall` throws a structured BUILD_BLOCKED
+ * error. With `runOpts.allowBuilds` the blocked packages are first
+ * authorized in the target profile (pnpm-workspace.yaml `allowBuilds` +
+ * `pnpm.onlyBuiltDependencies`), then the install is re-run automatically —
+ * the authorization is a real policy edit, never a UI-only state change.
+ *
+ * @throws PluginInstallError on failure — never writes a success record.
+ * @param options install request (source selects the strategy in the
+ *   installer layer)
+ * @param executor override for tests; defaults to the real dsh executor.
+ * @param runOpts extra install controls (e.g. allow-builds retry).
+ */
+export async function installPlugin(
+  options: InstallPluginOptions,
+  executor?: typeof execDsh,
+  runOpts: InstallPluginRunOptions = {},
+): Promise<PluginView[]> {
+  const exec = executor ?? execDsh
+  try {
+    return await installAndPersist(options, exec)
+  } catch (err) {
+    if (runOpts.allowBuilds && isBuildBlockedError(err)) {
+      authorizeBuildScripts(options.profile ?? DEFAULT_PROFILE, {
+        keys: err.keys,
+        names: err.names,
+      })
+      return installAndPersist(options, exec)
+    }
+    throw err
+  }
 }
 
 /**
@@ -380,4 +444,4 @@ export function formatCliError(result: ExecResult): string {
   return `命令以退出码 ${result.exitCode} 结束`
 }
 
-export { validationError }
+export { validationError, isBuildBlockedError }

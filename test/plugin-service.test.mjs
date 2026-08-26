@@ -20,7 +20,7 @@ await build({
   stdin: {
     contents: `
       export { listPlugins, enablePlugin, disablePlugin, exportPluginInfo, addPlugin, removePlugin, uninstallPlugin, installPlugin, validatePluginName } from './src/main/services/dsh/DshPluginService'
-      export { runInstall, validateProfile, DEFAULT_PROFILE } from './src/main/services/dsh/DshPluginInstaller'
+      export { runInstall, validateProfile, DEFAULT_PROFILE, isBuildBlockedError } from './src/main/services/dsh/DshPluginInstaller'
       export { execDsh } from './src/main/services/dsh/DshCommandExecutor'
     `,
     resolveDir: root,
@@ -44,6 +44,7 @@ const {
   runInstall,
   validateProfile,
   validatePluginName,
+  isBuildBlockedError,
   DEFAULT_PROFILE,
   execDsh,
 } = await import(pathToFileURL(outfile).href)
@@ -429,3 +430,105 @@ test('legacy records without source/profile keep working and fall back', () => {
   assert.equal(p.installedAt, null)
 })
 
+// ---- pnpm blocked build scripts (allow-builds retry) ---- //
+
+const GIT_BLOCKED_OUTPUT = [
+  '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/abidhmuhsin/dsh-visualizer/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662": The git-hosted package "dsh-visualizer@0.2.0" needs to execute build scripts but is not in the "allowBuilds" allowlist.',
+  '',
+  'Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml to allow it to run scripts. For example:',
+  'allowBuilds:',
+  '  dsh-visualizer@https://codeload.github.com/abidhmuhsin/dsh-visualizer/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662: true',
+  '',
+].join('\n')
+
+
+/** Executor that fails once with blocked-build output, then installs. */
+function blockedThenOkExecutor(blockedOutput, resolvedName) {
+  const calls = []
+  const executor = async (args) => {
+    calls.push({ args })
+    if (calls.length === 1) {
+      return { ok: false, exitCode: 1, stdout: blockedOutput, stderr: '', timedOut: false }
+    }
+    const dep = resolvedName ?? args[args.length - 1]
+    const manifest = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
+    if (!manifest.dependencies) manifest.dependencies = {}
+    manifest.dependencies[dep] = '^1.0.0'
+    fs.writeFileSync(path.join(tmpProfileDir, 'package.json'), JSON.stringify(manifest, undefined, 2) + '\n', 'utf8')
+    fs.mkdirSync(path.join(tmpProfileDir, 'node_modules', dep), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpProfileDir, 'node_modules', dep, 'package.json'),
+      JSON.stringify({ name: dep, version: '1.0.0', dsh: { bundle: {} } }, undefined, 2) + '\n',
+      'utf8',
+    )
+    return { ok: true, exitCode: 0, stdout: 'installed', stderr: '', timedOut: false }
+  }
+  executor.calls = calls
+  return executor
+}
+
+test('validation: git/GitHub install specs are accepted', () => {
+  for (const spec of [
+    'github:abidhmuhsin/dsh-visualizer',
+    'github:linxin666/dsh-chat-recovery',
+    'https://github.com/abidhmuhsin/dsh-visualizer',
+    'git+https://github.com/abidhmuhsin/dsh-visualizer.git',
+    'git@github.com:abidhmuhsin/dsh-visualizer.git',
+    'abidhmuhsin/dsh-visualizer',
+  ]) {
+    assert.equal(validatePluginName(spec), null, spec)
+  }
+  // Shell metacharacters and whitespace are still rejected in git specs.
+  assert.ok(validatePluginName('github:a/b;rm -rf'))
+  assert.ok(validatePluginName('https://github.com/a b'))
+})
+
+test('installer: pnpm blocked build scripts throw BUILD_BLOCKED with parsed keys', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = async () => ({
+    ok: false, exitCode: 1, stdout: GIT_BLOCKED_OUTPUT, stderr: '', timedOut: false,
+  })
+  await assert.rejects(
+    () => installPlugin({ name: 'github:abidhmuhsin/dsh-visualizer', source: 'npm' }, exec),
+    (err) =>
+      isBuildBlockedError(err) &&
+      err.keys.length === 1 &&
+      err.keys[0].startsWith('dsh-visualizer@https://') &&
+      /放行构建脚本/.test(err.message),
+  )
+})
+
+test('installer: allowBuilds retry authorizes pnpm policy, re-runs and persists', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = blockedThenOkExecutor(GIT_BLOCKED_OUTPUT, 'dsh-visualizer')
+  const plugins = await installPlugin(
+    { name: 'github:abidhmuhsin/dsh-visualizer', source: 'npm' },
+    exec,
+    { allowBuilds: true },
+  )
+  // Two attempts: original + retry after authorization.
+  assert.equal(exec.calls.length, 2)
+  assert.equal(plugins.length, 1)
+  assert.equal(plugins[0].packageName, 'dsh-visualizer')
+  // The real authorization must have happened: pnpm-workspace.yaml now
+  // carries the allowBuilds spec and the manifest the plain name.
+  const workspace = fs.readFileSync(path.join(tmpProfileDir, 'pnpm-workspace.yaml'), 'utf8')
+  assert.ok(workspace.includes('allowBuilds:'))
+  assert.ok(workspace.includes('dsh-visualizer@https://codeload.github.com/abidhmuhsin/dsh-visualizer/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662'))
+  const manifest = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
+  assert.ok(manifest.pnpm.onlyBuiltDependencies.includes('dsh-visualizer'))
+  // Install metadata persisted keyed by the requested spec.
+  assert.ok(manifest.dsh.desktop.plugins['github:abidhmuhsin/dsh-visualizer'])
+})
+
+test('installer: allowBuilds retry that stays blocked surfaces BUILD_BLOCKED again', async () => {
+  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
+  const exec = async () => ({
+    ok: false, exitCode: 1, stdout: GIT_BLOCKED_OUTPUT, stderr: '', timedOut: false,
+  })
+  exec.calls = []
+  await assert.rejects(
+    () => installPlugin({ name: 'github:abidhmuhsin/dsh-visualizer', source: 'npm' }, exec, { allowBuilds: true }),
+    (err) => isBuildBlockedError(err) && err.keys.length === 1,
+  )
+})

@@ -11,6 +11,7 @@
  * tell the three apart.
  */
 import { execDsh, type ExecResult } from './DshCommandExecutor'
+import { hasBlockedBuildSignal, parseBlockedBuildInfo, type BlockedBuildInfo } from './pnpmBuildPolicy'
 import { appLog } from '../../logger'
 
 // ---- types ----
@@ -32,6 +33,13 @@ export interface PluginInstallError {
   cause?: unknown
 }
 
+/** Build-blocked failure carrying the packages pnpm wants allowlisted. */
+export interface BuildBlockedInstallError extends PluginInstallError {
+  code: 'BUILD_BLOCKED'
+  keys: string[]
+  names: string[]
+}
+
 /** Validation error for bad install requests. */
 export function validationError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'INVALID_REQUEST', message, cause }
@@ -40,6 +48,25 @@ export function validationError(message: string, cause?: unknown): PluginInstall
 /** Failure while executing the install command. */
 export function execError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'EXEC_FAILED', message, cause }
+}
+
+/** Narrow the catch type to a structured build-blocked error. */
+export function isBuildBlockedError(err: unknown): err is BuildBlockedInstallError {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    (err as PluginInstallError).code === 'BUILD_BLOCKED'
+  )
+}
+
+/** Build a user-facing BUILD_BLOCKED error from parsed pnpm output. */
+export function buildBlockedError(info: BlockedBuildInfo, cause?: unknown): BuildBlockedInstallError {
+  const detail = info.keys.length > 0
+    ? info.keys.join(', ')
+    : info.names.join(', ')
+  const message = `pnpm 默认阻止构建脚本执行（build scripts are blocked by pnpm by default）` +
+    (detail ? `：${detail}` : '') + `。放行构建脚本后可重新安装`
+  return { code: 'BUILD_BLOCKED', message, keys: info.keys, names: info.names, cause }
 }
 
 /** Installer implementations. Each owns one source channel and the command
@@ -71,6 +98,11 @@ function logInstall(opts: InstallPluginOptions, command: string): void {
     `[PluginInstall] source=${opts.source} profile=${opts.profile ?? DEFAULT_PROFILE} plugin=${opts.name}`,
   )
   appLog.info(`[PluginInstall] command=dsh ${command}`)
+}
+
+/** Full CLI output of an exec result (stdout + stderr). */
+function execOutput(result: ExecResult): string {
+  return [result.stdout, result.stderr].filter(Boolean).join('\n')
 }
 
 // ---- npm installer ----
@@ -144,8 +176,8 @@ function installerFor(source: string, exec: Executor): PluginInstaller {
  *
  * - validates the plugin name up front, and the profile for `dsh-profile`
  * - runs the source's installer (argument arrays — no shell strings)
- * - maps exec results into structured errors: dsh CLI missing / timeout /
- *   spawn failure / non-zero exit
+ * - maps exec results into structured errors: build scripts blocked by pnpm /
+ *   dsh CLI missing / timeout / spawn failure / non-zero exit
  *
  * Returns the exec result; the caller persists metadata on success.
  */
@@ -168,6 +200,15 @@ export async function runInstall(
   const result = await installer.install(opts)
 
   if (result.ok) return result
+
+  // pnpm's own supply-chain gate refused dependency build scripts (git/GitHub
+  // plugin `prepare`, registry postinstall, ...). Surface it as a structured
+  // BUILD_BLOCKED error so DshPluginService / the UI can authorize and retry.
+  const output = execOutput(result)
+  const blocked = parseBlockedBuildInfo(output)
+  if (blocked.keys.length > 0 || blocked.names.length > 0 || hasBlockedBuildSignal(output)) {
+    throw buildBlockedError(blocked, result)
+  }
 
   if (result.timedOut) {
     throw execError('插件安装超时，请检查网络连接后重试', result)

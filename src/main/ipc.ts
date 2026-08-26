@@ -9,7 +9,7 @@ import { logEvents, recentLogs, clearLogs } from './logger'
 import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
-import type { InstallPluginOptions } from './services/dsh/DshPluginService'
+import { isBuildBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
 import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
@@ -67,8 +67,20 @@ export function registerIpc(): void {
 
   // ---- plugins (dsh profile-based) ----
   ipcMain.handle('plugins:list', () => dshPlugin.listPlugins())
-  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions) => {
-    return dshPlugin.installPlugin(options)
+  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions & { allowBuilds?: boolean }) => {
+    try {
+      const plugins = await dshPlugin.installPlugin(options, undefined, {
+        allowBuilds: options?.allowBuilds === true,
+      })
+      return { status: 'installed', plugins }
+    } catch (err) {
+      // pnpm blocked dependency build scripts: hand the structured info back
+      // so the renderer can offer a real allow-build-scripts-and-retry action.
+      if (isBuildBlockedError(err)) {
+        return { status: 'build-blocked', message: err.message, keys: err.keys, names: err.names }
+      }
+      throw err
+    }
   })
   ipcMain.handle('plugins:remove', async (_e, id: string) => {
     await dshPlugin.removePlugin(id)

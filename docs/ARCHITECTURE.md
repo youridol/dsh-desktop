@@ -14,7 +14,7 @@ flowchart TB
         DSHMGR["dsh/manager.ts DSH 生命周期"]
         DSHINST["dsh/install.ts 版本安装<br/>（npm 安装 / 源码构建 / 运行时解包）"]
         DSHREL["dsh/releases.ts GitHub Releases 客户端"]
-        PLUGINS["services/dsh/ 插件管理<br/>（dsh CLI 调用方 + profile 读取）"]
+        PLUGINS["services/dsh/ 插件管理<br/>（dsh CLI 调用方 + profile 读取<br/>+ pnpm 构建策略授权 pnpmBuildPolicy）"]
         SKILLS["services/skills/ Skills 管理<br/>（仓库 / 作用域 / 备份，git CLI + GitHub API）"]
         VERSIONS["versions.ts 版本管理"]
     end
@@ -66,6 +66,8 @@ flowchart TB
 
 > 说明：图中每个模块（`index.ts` / `ipc.ts` / `windows/` / `tray.ts` / `autostart.ts` / `config.ts` / `paths.ts` / `logger.ts` / `dsh/manager.ts` / `dsh/install.ts` / `dsh/releases.ts` / `services/dsh/` / `versions.ts` / `src/preload/` / `src/renderer/` 各页面）均可在下方目录结构（第 5 节）中定位。
 
+> **完全放行原则**：dsh-desktop 对 deepseek-harness 不设任何拦截 / 限制 / 沙箱 / 二次阻断——命令层以数组参数完整透传环境（无 `ignore-scripts`、无限制性环境变量），主窗口不拦截 DSH Web UI 的弹窗 / 新窗口（`window.open` 原生行为优先）；仅使用 harness 官方 CLI 选项（`--no-open`，壳层内嵌 UI 的标准集成）与僵死进程看门狗超时。dsh-desktop 唯一的「写入」是解除 pnpm 默认构建脚本拦截的 Profile 策略授权（`allowBuilds`），目的与效果都是放行，而非限制。
+
 ## 2. 模块职责矩阵
 
 | 模块 | 职责 | 关键文件 |
@@ -79,10 +81,10 @@ flowchart TB
 | 版本安装 | npm 版本安装（内置 npm CLI）；源码 commit 安装（codeload 下载 → pnpm install/build → 布局 junction）；捆绑运行时首次解包（`System32\tar.exe`）；junction 安全删除 | `src/main/dsh/install.ts` |
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
-| 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh 由 `DshPluginInstaller.ts` 策略层分发）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出 | `src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` |
+| 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh 由 `DshPluginInstaller.ts` 策略层分发，插件名支持 npm 包或 GitHub/git 地址）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出；pnpm 构建脚本拦截时经 `pnpmBuildPolicy.ts` 解析精确 spec 并授权（`allowBuilds` + `onlyBuiltDependencies`）后自动重装 | `src/main/services/dsh/DshPluginService.ts` + `DshPluginInstaller.ts` + `pnpmBuildPolicy.ts` + `profilePaths.ts` |
 | Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global/project 清单 = index.json + 磁盘 Agent 扫描合并（已有 Skills 直接可见，Agent 管理模块同时区分展示全局/项目 Agent）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
-| 主窗口 | loader 页 / DSH UI 双向导航；默认 1600×900（可缩放，最小 960×600）；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
+| 主窗口 | loader 页 / DSH UI 双向导航；默认 1600×900（可缩放，最小 960×600）；最小化与关闭隐藏到托盘；对 DSH Web UI 完全放行（不拦截弹窗 / 新窗口，harness 行为原生优先） | `src/main/windows/main.ts` |
 | 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板；自愈（窗口丢失 / 渲染进程崩溃自动重建并复位，可见性 / 位置周期对账） | `src/main/windows/floating.ts` + `src/main/windows/supervisor.ts` |
 | 控制面板 | 无边框子窗口（默认 560×680，可缩放，最小 480×520），随主窗口隐藏 / 恢复，无任务栏项；自愈（渲染进程崩溃 / 页面加载失败自动重建或重载并恢复打开状态，打开前校验健康、就绪后再显示避免白屏） | `src/main/windows/control.ts` + `src/main/windows/supervisor.ts` |
 | 窗口守护（supervisor） | 子窗口通用生命周期 / 渲染健康看门狗：hook `render-process-gone` / `did-fail-load`，轮询窗口丢失与渲染崩溃，经模块回调重建 / 重载 / 刷新，恢复动作限流防抖；纯决策函数可单测 | `src/main/windows/supervisor.ts` |
@@ -128,10 +130,16 @@ dsh-desktop 是 dsh harness 上游插件机制的派生管理工具（`src/main/
 
 ```
 安装（plugins:add，DshPluginService）
-  → 校验 npm 包名 → dsh plugin --profile web add <name>
-       （dsh 转发 pnpm：解析/下载/依赖交给 dsh harness）
-  → 读取 $DSH_HOME/profiles/web/package.json（dependencies + dsh.profile.bundles）
-  → 转换为 PluginView 回传控制面板 UI
+  → 校验插件名（npm 包名 或 GitHub/git 地址；拒绝 shell 元字符）
+  → dsh plugin --profile <profile> add <name|spec>
+       （dsh 转发 pnpm：解析/下载/依赖/构建交给 dsh harness）
+  → 成功：读取 profile manifest（dependencies + dsh.profile.bundles）→ 转换为 PluginView 回传
+  → 失败且为 pnpm 构建脚本拦截（pnpmBuildPolicy.parseBlockedBuildInfo 识别
+       ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED / Ignored build scripts /
+       blocked by pnpm by default 等）→ 返回 build-blocked（含精确 spec）
+  → 用户确认「放行构建脚本并重试」→ authorizeBuildScripts 写入该 Profile 的
+       pnpm-workspace.yaml allowBuilds（+ package.json pnpm.onlyBuiltDependencies）
+  → 自动重新执行 dsh plugin add（构建脚本放行后 pnpm 正常执行 prepare/构建）
 
 启用 / 禁用（plugins:enable / plugins:disable）
   → 将包名加入 / 移出 profile manifest 的 dsh.profile.bundles
@@ -242,6 +250,7 @@ dsh-desktop/
 ├── src/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
+│   │   ├── services/dsh/       # dsh 插件管理（DshPluginService / DshPluginInstaller / pnpmBuildPolicy / profilePaths）
 │   │   ├── services/skills/      # Skills 管理（validation / discovery / harnessPaths / gitRunner / repositoryManager / lifecycle / backup / skillsService）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板 + supervisor 窗口守护
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）

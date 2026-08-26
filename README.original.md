@@ -1,3 +1,8 @@
+> ⚠️ **历史存档**：本文档是早期版本（≤ v0.5）的原始 README，描述的是已移除的 Cordis `--patch` 插件机制（本地目录 / git clone 安装插件、`cordis.patch.yml` overlay）。
+>
+> 当前版本（v0.8.3）的插件体系已改为 dsh harness 原生 Web profile（`dsh plugin --profile <profile> add <包名|GitHub 地址>`），并对 deepseek-harness 完全放行、行为优先。
+>
+> **一切当前行为以 [README.md](./README.md) 为准。**
 # DSH Desktop
 
 DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，简称 DSH）的 Windows x64 桌面封装。

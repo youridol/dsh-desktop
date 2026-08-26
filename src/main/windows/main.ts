@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
-import { BrowserWindow, app, shell } from 'electron'
+import { BrowserWindow, app } from 'electron'
 import { getStatus, dshEvents, probeService } from '../dsh/manager'
 import { getConfig } from '../config'
 import { appLog } from '../logger'
@@ -37,14 +37,10 @@ export function createMainWindow(): BrowserWindow {
     },
   })
 
-  const denyPopups = ({ url }: { url: string }): { action: 'deny' } => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  }
-
+  // 完全放行：不拦截 DSH Web UI 的任何弹窗 / 新窗口行为（window.open 由
+  // harness 自身决定，原生在应用内打开），dsh-desktop 不对此设任何限制。
   win.once('ready-to-show', () => win?.show())
   void win.loadFile(path.join(__dirname, 'renderer', 'loader', 'index.html'))
-  win.webContents.setWindowOpenHandler(denyPopups)
 
   win.on('minimize', () => {
     win?.hide()

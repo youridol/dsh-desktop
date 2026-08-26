@@ -27,6 +27,19 @@ export interface PluginListResult {
   profileDir: string
 }
 
+/** Result of a plugin install: success, or pnpm blocked build scripts. */
+export type PluginInstallResult =
+  | { status: 'installed'; plugins: PluginView[] }
+  | {
+      status: 'build-blocked'
+      /** User-facing explanation (pnpm blocked build scripts). */
+      message: string
+      /** Exact package specs pnpm wants allowlisted. */
+      keys: string[]
+      /** Plain package names for onlyBuiltDependencies. */
+      names: string[]
+    }
+
 export interface ExportInfo {
   packageName: string
   version: string | null
@@ -191,7 +204,7 @@ export interface Bridge {
   restart: () => Promise<void>
 
   listPlugins: () => Promise<PluginListResult>
-  addPlugin: (options: { name: string; source: PluginInstallSource; profile?: string }) => Promise<PluginView[]>
+  addPlugin: (options: { name: string; source: PluginInstallSource; profile?: string; allowBuilds?: boolean }) => Promise<PluginInstallResult>
   removePlugin: (id: string) => Promise<PluginListResult>
   enablePlugin: (id: string) => Promise<PluginListResult>
   disablePlugin: (id: string) => Promise<PluginListResult>

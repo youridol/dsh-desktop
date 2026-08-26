@@ -22,7 +22,7 @@ npm ci            # 干净环境（有 lockfile 时推荐，CI 同款）；或 n
 npm run fetch-dsh # 默认捆绑上游最新 Release；可用 --version 0.1.1-rc.2 固定版本
 ```
 
-- 应用本体**无运行时 npm 依赖**：`package.json` 只有 `devDependencies`（4 个直接依赖：`@types/node`、`electron`、`electron-builder`、`esbuild`、`typescript`），运行时数据全部来自 `src/` 编译产物与捆绑的 DSH 运行时包。
+- 应用本体**无运行时 node_modules**：`package.json` 的 `dependencies` 仅 `js-yaml`（^4.3，用于解析 Profile 的 `pnpm-workspace.yaml` 构建策略），由 esbuild 打入 `dist/main.js`，打包产物不携带运行时 node_modules；`devDependencies` 为 `@types/js-yaml`、`@types/node`、`electron`、`electron-builder`、`esbuild`、`typescript`。运行时数据全部来自 `src/` 编译产物与捆绑的 DSH 运行时包。
 - 版本来源：`dsh-vX.Y.Z(-rc.N)` 发布 tag 与 npm 包 `@deepseek-ai/dsh@X.Y.Z(-rc.N)` 一一对应（`src/main/dsh/releases.ts` 的 `tagToVersion`）；`GITHUB_TOKEN` 环境变量存在时用于规避匿名 API 限流（`scripts/fetch-dsh.mjs`）。
 - 可选：`npm run make-icons` —— 从 `assets/icon.png` 生成多尺寸 `assets/icon.ico`（`assets/icon.ico` 已入库，仅在图标源变更后需要）。
 
