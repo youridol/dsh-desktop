@@ -78,7 +78,7 @@ npm run dist:zip        # electron-builder --win zip  --x64 -> release/zip/
 
 | 工作流 | 触发 | 行为 |
 | --- | --- | --- |
-| `poll-upstream.yml` | 每小时 37 分定时 + `workflow_dispatch`（`force` / `release_mode` / `override_version`） | 巡检上游最新 Release tag 与默认分支最新 commit；本仓库无对应 `v{版本}` tag → 以 main 代码调 `build-and-release.yml` 发正式版；仅上游 commit 变化 → 发 `v{版本}-dev-{sha7}` 候选版（prerelease）；无变化幂等退出 |
+| `poll-upstream.yml` | 每小时 37 分定时 + `workflow_dispatch`（`force` / `release_mode` / `override_version`） | 巡检上游最新 Release tag 与默认分支最新 commit；本仓库无对应 `v{版本}` tag → 以 main 代码调 `build-and-release.yml` 发正式版；仅上游 commit 变化 → 发 `v{APP_VERSION}-{sha7}` 候选版（prerelease）；无变化幂等退出 |
 | `build-and-release.yml` | 任意分支 push + `workflow_call` 复用 + 手动 | windows-latest / Node 22：checkout → `npm ci` → `tsc --noEmit` → `make-icons` → `fetch-dsh`（poll 通道按指定版本固定捆绑）→ `build` → `pack-runtime` → NSIS + zip（注入 `GH_TOKEN`）→ `sha256sum` checksums → 打 tag 并 `gh release` 发布（标题 `DSH Desktop v{版本}`，资产 exe/zip/checksums） |
 
 发版规则（双版本号规范，`.github/workflows/`，严禁混淆两个版本号）：
@@ -87,7 +87,8 @@ npm run dist:zip        # electron-builder --win zip  --x64 -> release/zip/
 - **发版版本**（V）= `APP_VERSION-UPSTREAM`（如 `0.3.0-0.1.1-rc.2` / `0.3.0-a1b2c3d`）；
 - **tag 规则**：main 分支 → `v{V}`；其它分支 → `v{V}-{清洗后分支名}`；dev 候选版同复合格式（prerelease 由 release 标志标记）；
 - 幂等：目标 tag 已存在即跳过发版（tag 存在性为真相源），`force=true` 才覆盖资产；
-- 防循环：tag push 不匹配 `branches` 过滤，不会回流触发。
+- 防循环：tag push 不匹配 `branches` 过滤，不会回流触发；
+- 决策复用：版本递进识别 / tag 生成 / 幂等判定统一由 `scripts/release-plan.mjs` 实现，单测见 `test/release-plan.test.mjs`（CI 构建前自动执行）。
 
 ### 4.3 部署产物分发
 

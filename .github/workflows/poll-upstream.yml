@@ -11,6 +11,7 @@ name: Poll upstream
 #
 # GitHub Actions 无法订阅他人仓库事件，故用定时轮询 + “本仓库 tag 存在性”作为幂等真相源：
 # 同一版本连跑多次调度，只有第一次发版，后续轮询发现 tag 已存在即跳过（连 tag 也无需重复查询）。
+# 决策逻辑与 build-and-release 共用 scripts/release-plan.mjs（单测：test/release-plan.test.mjs）。
 
 on:
   schedule:
@@ -45,7 +46,7 @@ jobs:
     outputs:
       changed: ${{ steps.decide.outputs.changed }}
       mode: ${{ steps.decide.outputs.mode }}
-      version: ${{ steps.decide.outputs.version }}
+      upstream: ${{ steps.decide.outputs.upstream }}
       app_version: ${{ steps.decide.outputs.app_version }}
       sha: ${{ steps.decide.outputs.sha }}
       upstream_tag: ${{ steps.decide.outputs.upstream_tag }}
@@ -90,48 +91,27 @@ jobs:
           SHA=$(gh api "repos/deepseek-ai/deepseek-harness/commits/${DEFAULT_BRANCH}" --jq '.sha')
           SHA7=${SHA:0:7}
 
-          # 【双版本号规范】dsh-desktop 自身版本取自 package.json；本仓库 tag 一律 v{APP_VERSION}-{上游标识}
+          # 【双版本号规范】dsh-desktop 自身版本取自 package.json；决策统一走共享模块 scripts/release-plan.mjs。
+          # 注意：schedule 事件下 inputs.release_mode 为空，必须按 auto 处理（空 ≠ 显式覆盖），
+          # 否则巡检永远判定无变化、永远不触发构建。
           APP_VERSION=$(node -p "require('./package.json').version")
           echo "desktop app version: $APP_VERSION"
 
-          # 幂等真相源：本仓库是否已有对应复合 tag（tag 版本新 → tag 版本号；提交版本最新 → sha7）
-          TAG_VER="v${APP_VERSION}-${VERSION}"
-          TAG_SHA="v${APP_VERSION}-${SHA7}"
-          HAS_TAG_VER=false
-          if git ls-remote --tags origin "refs/tags/${TAG_VER}" | grep -q .; then
-            HAS_TAG_VER=true
-          fi
-          HAS_TAG_SHA=false
-          if [ "$HAS_TAG_VER" = "true" ] && git ls-remote --tags origin "refs/tags/${TAG_SHA}" | grep -q .; then
-            HAS_TAG_SHA=true
-          fi
-
           echo "upstream: tag=$UPSTREAM_TAG version=$VERSION prerelease=$UP_PRE sha=$SHA7 branch=$DEFAULT_BRANCH"
-          echo "local:    $TAG_VER $([ "$HAS_TAG_VER" = "true" ] && echo present || echo missing), $TAG_SHA $([ "$HAS_TAG_SHA" = "true" ] && echo present || echo missing)"
 
-          # 决策：手动指定模式 > 上游新 Release（无 v{APP}-{tag 版本}）> 上游新 commit（无 v{APP}-{sha7}）> force > 无变化
-          MODE=""
-          if [ "$RELEASE_MODE_INPUT" != "auto" ]; then
-            MODE="$RELEASE_MODE_INPUT"
-          elif [ "$HAS_TAG_VER" != "true" ]; then
-            MODE=version
-          elif [ "$HAS_TAG_SHA" != "true" ]; then
-            MODE=dev
-          elif [ "$FORCE" = "true" ]; then
-            MODE=version
-          fi
+          # 输出 changed/mode/upstream/app_version/version/tag/skip/prerelease 写入 $GITHUB_OUTPUT
+          node scripts/release-plan.mjs \
+            --app-version "$APP_VERSION" \
+            --upstream-version "$VERSION" \
+            --upstream-sha "$SHA" \
+            --branch main \
+            --release-mode "$RELEASE_MODE_INPUT" \
+            --force "$FORCE" \
+            --allow-dev true \
+            --remote origin
 
-          # 上游标识：发布 tag 版本更新 → tag 规范化版本；提交版本最新（dev）→ sha 前 7 位
-          UPSTREAM_ID="$VERSION"
-          if [ "$MODE" = "dev" ]; then
-            UPSTREAM_ID="$SHA7"
-          fi
-
+          # 上游引用字段透传（notes 用 heredoc 避免换行截断）
           {
-            echo "changed=$([ -n "$MODE" ] && echo true || echo false)"
-            echo "mode=${MODE:-none}"
-            echo "version=$UPSTREAM_ID"
-            echo "app_version=$APP_VERSION"
             echo "sha=$SHA"
             echo "upstream_tag=$UPSTREAM_TAG"
             echo "upstream_prerelease=$UP_PRE"
@@ -149,7 +129,7 @@ jobs:
     uses: ./.github/workflows/build-and-release.yml
     with:
       # poll 通道固定以 main 代码出 v{V}（或其 dev 候选版）；版本与上游引用一并下传
-      version: ${{ needs.watch.outputs.version }}
+      version: ${{ needs.watch.outputs.upstream }}
       release_mode: ${{ needs.watch.outputs.mode }}
       upstream_tag: ${{ needs.watch.outputs.upstream_tag }}
       upstream_sha: ${{ needs.watch.outputs.sha }}
@@ -167,7 +147,7 @@ jobs:
         env:
           CHANGED: ${{ needs.watch.outputs.changed }}
           MODE: ${{ needs.watch.outputs.mode }}
-          VERSION: ${{ needs.watch.outputs.version }}
+          UPSTREAM: ${{ needs.watch.outputs.upstream }}
           APP_VERSION: ${{ needs.watch.outputs.app_version }}
           SHA: ${{ needs.watch.outputs.sha }}
           UPSTREAM_TAG: ${{ needs.watch.outputs.upstream_tag }}
@@ -179,11 +159,11 @@ jobs:
             echo "| --- | --- |"
             echo "| 上游 Release tag | \`${UPSTREAM_TAG:-（无）}\` |"
             echo "| 上游默认分支 commit | \`${SHA:0:7}\` |"
-            echo "| 上游 DSH 标识 | \`${VERSION:-（无）}\` |"
+            echo "| 上游 DSH 标识 | \`${UPSTREAM:-（无）}\` |"
             echo "| dsh-desktop 版本 | \`${APP_VERSION:-（无）}\` |"
             if [ "$CHANGED" = "true" ]; then
               echo "| 决策 | 触发构建（模式 \`$MODE\`）|"
-              echo "| 目标 tag | \`v${APP_VERSION}-${VERSION}\` |"
+              echo "| 目标 tag | \`v${APP_VERSION}-${UPSTREAM}\` |"
             else
               echo "| 决策 | ⏭️ 幂等退出（对应 tag 均已存在，无上游变化）|"
             fi
