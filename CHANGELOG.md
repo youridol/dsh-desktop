@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.8.1] - 2026-08-27
+
+### 修复（插件安装方式切换）
+
+- 修复控制面板插件安装方式按钮组无法双向自由切换的问题：`npm` / `npx` / `dsh` 三种方式均可独立切换，初始化选择任一方式后可随时切回；按钮名称统一为 `dsh`，选中状态、Profile 输入显隐与安装逻辑保持同步。
+
+### 新增（Skills Agent 管理）
+
+- Skills 页新增 Agent 管理模块，同时展示并管理全局目录 Agent 与项目目录 Agent（目录束 / 扁平 Markdown），支持刷新、启用 / 停用与删除。
+- 项目作用域改为「清单 + 磁盘 Agent 扫描合并」，项目目录中已有的本机 Agent 可直接读取与管理；沿用现有 Skills 生命周期与 IPC，不修改 `deepseek-harness` 上游代码。
+
+### 验证
+
+- `test/skills-service.test.mjs` 新增项目 Agent 合并、策略启停、纯磁盘删除与扁平 `.md` 管理用例；`npm run typecheck`、`npm run build` 与全部 71 项测试通过。
+
 ## [v0.8.0] - 2026-08-26
 
 ### 重构（控制面板 UI 统一与 Skills 概览修复）
