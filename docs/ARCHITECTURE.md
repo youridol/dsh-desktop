@@ -83,8 +83,9 @@ flowchart TB
 | Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global/project 清单 = index.json + 磁盘 Agent 扫描合并（已有 Skills 直接可见，Agent 管理模块同时区分展示全局/项目 Agent）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；默认 1600×900（可缩放，最小 960×600）；最小化与关闭隐藏到托盘；外部链接拦截 | `src/main/windows/main.ts` |
-| 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板 | `src/main/windows/floating.ts` |
-| 控制面板 | 无边框子窗口（默认 560×680，可缩放，最小 480×520），随主窗口隐藏 / 恢复，无任务栏项 | `src/main/windows/control.ts` |
+| 悬浮球 | 56px 无边框子窗口，贴住主窗口右下角，位置记忆；单击开关控制面板；自愈（窗口丢失 / 渲染进程崩溃自动重建并复位，可见性 / 位置周期对账） | `src/main/windows/floating.ts` + `src/main/windows/supervisor.ts` |
+| 控制面板 | 无边框子窗口（默认 560×680，可缩放，最小 480×520），随主窗口隐藏 / 恢复，无任务栏项；自愈（渲染进程崩溃 / 页面加载失败自动重建或重载并恢复打开状态，打开前校验健康、就绪后再显示避免白屏） | `src/main/windows/control.ts` + `src/main/windows/supervisor.ts` |
+| 窗口守护（supervisor） | 子窗口通用生命周期 / 渲染健康看门狗：hook `render-process-gone` / `did-fail-load`，轮询窗口丢失与渲染崩溃，经模块回调重建 / 重载 / 刷新，恢复动作限流防抖；纯决策函数可单测 | `src/main/windows/supervisor.ts` |
 | 托盘 | 状态提示 + 菜单（显示主窗口 / 打开控制面板 / 退出）；退出为唯一真实退出通道 | `src/main/tray.ts` |
 | 开机自启 | `app.setLoginItemSettings` 同步开关（便携版指向 exe 真实路径） | `src/main/autostart.ts` |
 | preload 桥 | 按窗口暴露窄桥接：`dshLoader`（文件协议守卫）/ `dshBall` / `dshc` | `src/preload/loader.ts`、`floating.ts`、`control.ts` |
@@ -242,7 +243,7 @@ dsh-desktop/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
 │   │   ├── services/skills/      # Skills 管理（validation / discovery / harnessPaths / gitRunner / repositoryManager / lifecycle / backup / skillsService）
-│   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板
+│   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板 + supervisor 窗口守护
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）
 │   └── renderer/               # 无框架页面：loader / floating / control（tabs/ 含 dashboard/ Widget 注册表与 widgets/、skills.ts）
 ├── package.json                # 版本、scripts、devDependencies（应用本体零运行时依赖）

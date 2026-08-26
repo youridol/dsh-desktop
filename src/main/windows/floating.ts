@@ -2,22 +2,54 @@
  * Floating ball: a small transparent child window pinned over the main
  * window's bottom-right corner. Single click toggles the control panel;
  * dragging moves the ball (offset persisted relative to the main window).
+ *
+ * Self-healing: a supervisor watches the ball's lifecycle. If the window is
+ * destroyed or its renderer crashes, the ball is rebuilt and re-shown, and a
+ * periodic refresh keeps it positioned + visible in step with the main
+ * window — the floating entry never permanently disappears.
  */
 import path from 'node:path'
 import { BrowserWindow } from 'electron'
 import { getConfig, mutateConfig } from '../config'
 import { getMainWindow, mainWindowEvents } from './main'
 import { toggleControlPanel } from './control'
+import { superviseWindow } from './supervisor'
 
 const BALL_SIZE = 56
 const DEFAULT_MARGIN = 24
 const MIN_OFFSET = { x: -400, y: -400 }
+/** A drag is considered finished after this long without new deltas. */
+const DRAG_IDLE_MS = 1000
 
 let ball: BrowserWindow | null = null
+let disposeSupervisor: (() => void) | null = null
+let listenersAttached = false
+let dragging = false
+let dragTimer: NodeJS.Timeout | null = null
+
+function attachMainWindowListeners(): void {
+  if (listenersAttached) return
+  listenersAttached = true
+  mainWindowEvents.on('moved', () => reposition())
+  mainWindowEvents.on('hidden-to-tray', () => reposition())
+}
+
+function rebuildBall(): void {
+  // Idempotency guard: a concurrent recovery may already have rebuilt the
+  // ball — never destroy a live, rendering window.
+  const live = ball
+  if (live && !live.isDestroyed() && !live.webContents.isCrashed()) return
+  const old = ball
+  ball = null
+  if (old && !old.isDestroyed()) old.destroy()
+  createFloatingBall()
+}
 
 export function createFloatingBall(): void {
   const main = getMainWindow()
-  if (!main) return
+  if (!main || (ball && !ball.isDestroyed())) return
+  attachMainWindowListeners()
+
   ball = new BrowserWindow({
     width: BALL_SIZE,
     height: BALL_SIZE,
@@ -42,13 +74,27 @@ export function createFloatingBall(): void {
   // parent link is all the "always on top of the DSH UI" we need.
   void ball.loadFile(path.join(__dirname, 'renderer', 'floating', 'index.html'))
   ball.once('ready-to-show', () => {
-    reposition(true)
-    ball?.show()
+    const b = ball
+    if (!b || b.isDestroyed()) return
+    reposition()
+    b.show()
+    syncBallVisibility()
   })
   ball.on('moved', () => saveOffsetFromScreenPos())
 
-  mainWindowEvents.on('moved', () => reposition(false))
-  mainWindowEvents.on('hidden-to-tray', () => reposition(false))
+  if (!disposeSupervisor) {
+    disposeSupervisor = superviseWindow({
+      name: '悬浮球',
+      getWindow: () => ball,
+      rebuild: rebuildBall,
+      refresh: () => {
+        if (dragging) return
+        reposition()
+        syncBallVisibility()
+      },
+      isActive: () => getMainWindow() !== null,
+    })
+  }
 }
 
 /** Offset = distance from the main window's bottom-right corner to the ball's top-left. */
@@ -58,7 +104,7 @@ function currentOffset(): { x: number; y: number } {
   return { x: -(BALL_SIZE + DEFAULT_MARGIN), y: -(BALL_SIZE + DEFAULT_MARGIN) }
 }
 
-function reposition(initial: boolean): void {
+function reposition(): void {
   const main = getMainWindow()
   if (!main || !ball || ball.isDestroyed()) return
   const b = main.getBounds()
@@ -68,8 +114,7 @@ function reposition(initial: boolean): void {
   // Clamp inside the main window so the ball never drifts off.
   x = Math.min(Math.max(x, b.x + 4), b.x + b.width - BALL_SIZE - 4)
   y = Math.min(Math.max(y, b.y + 4), b.y + b.height - BALL_SIZE - 4)
-  if (initial) ball.setPosition(x, y, false)
-  else ball.setPosition(x, y, false)
+  ball.setPosition(x, y, false)
 }
 
 function saveOffsetFromScreenPos(): void {
@@ -87,6 +132,12 @@ function saveOffsetFromScreenPos(): void {
 /** Move by delta while the renderer drags (pointer events drive this). */
 export function dragBallBy(dx: number, dy: number): void {
   if (!ball || ball.isDestroyed()) return
+  dragging = true
+  if (dragTimer) clearTimeout(dragTimer)
+  dragTimer = setTimeout(() => {
+    dragging = false
+    dragTimer = null
+  }, DRAG_IDLE_MS)
   const [x, y] = ball.getPosition()
   const main = getMainWindow()
   if (main) {
@@ -104,6 +155,12 @@ export function ballClicked(): void {
 }
 
 export function destroyFloatingBall(): void {
+  if (disposeSupervisor) {
+    disposeSupervisor()
+    disposeSupervisor = null
+  }
+  if (dragTimer) clearTimeout(dragTimer)
+  dragTimer = null
   if (ball && !ball.isDestroyed()) ball.destroy()
   ball = null
 }
