@@ -57,11 +57,11 @@ const GIT_BLOCKED_OUTPUT = [
 ].join('\n')
 
 const SCOPED_GIT_BLOCKED_OUTPUT = [
-  '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/linxin666/dsh-chat-recovery/tar.gz/abc123": The git-hosted package "@linxin666/dsh-chat-recovery@0.3.5" needs to execute build scripts but is not in the "allowBuilds" allowlist.',
+  '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/linxin666/dsh-chat-recovery/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662": The git-hosted package "@linxin666/dsh-chat-recovery@0.3.5" needs to execute build scripts but is not in the "allowBuilds" allowlist.',
   '',
   'Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml to allow it to run scripts. For example:',
   'allowBuilds:',
-  '  @linxin666/dsh-chat-recovery@https://codeload.github.com/linxin666/dsh-chat-recovery/tar.gz/abc123: true',
+  '  @linxin666/dsh-chat-recovery@https://codeload.github.com/linxin666/dsh-chat-recovery/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662: true',
   '',
 ].join('\n')
 
@@ -124,8 +124,12 @@ test('hasBlockedBuildSignal recognizes pnpm git-dep and wording signals', () => 
 
 test('parseBlockedBuildInfo extracts the exact allowBuilds spec key from pnpm 11 git-dep errors', () => {
   const info = parseBlockedBuildInfo(GIT_BLOCKED_OUTPUT)
+  // The commit-pinned codeload key pnpm prints, plus the stable git+https
+  // key derived from the same codeload URL (pnpm >= 11.21 matches the
+  // stable form; the pinned form covers pnpm < 11.21).
   assert.deepEqual(info.keys, [
     'dsh-visualizer@https://codeload.github.com/abidhmuhsin/dsh-visualizer/tar.gz/3582d6cf621d2946bdc8cfb36a06ef568f60d662',
+    'dsh-visualizer@git+https://github.com/abidhmuhsin/dsh-visualizer.git',
   ])
   // The package name from the "git-hosted package" line feeds onlyBuiltDependencies.
   assert.deepEqual(info.names, ['dsh-visualizer'])
@@ -133,8 +137,10 @@ test('parseBlockedBuildInfo extracts the exact allowBuilds spec key from pnpm 11
 
 test('parseBlockedBuildInfo handles scoped packages', () => {
   const info = parseBlockedBuildInfo(SCOPED_GIT_BLOCKED_OUTPUT)
-  assert.equal(info.keys.length, 1)
+  // Pinned codeload key + derived stable git+https key.
+  assert.equal(info.keys.length, 2)
   assert.ok(info.keys[0].startsWith('@linxin666/dsh-chat-recovery@https://'))
+  assert.ok(info.keys.includes('@linxin666/dsh-chat-recovery@git+https://github.com/linxin666/dsh-chat-recovery.git'))
   assert.deepEqual(info.names, ['@linxin666/dsh-chat-recovery'])
 })
 
@@ -157,7 +163,9 @@ test('authorizeBuildScripts creates pnpm-workspace.yaml with allowBuilds when mi
   const res = authorizeBuildScripts('web', info)
 
   assert.equal(res.workspacePath, path.join(dir, 'pnpm-workspace.yaml'))
-  assert.equal(res.keys.length, 1)
+  // Both the pinned codeload key and the derived stable git+https key are
+  // authorized (the bare name also lands in allowBuilds for pnpm 11).
+  assert.equal(res.keys.length, 3)
   assert.equal(res.names.length, 1)
 
   const yamlText = fs.readFileSync(res.workspacePath, 'utf8')
@@ -165,7 +173,9 @@ test('authorizeBuildScripts creates pnpm-workspace.yaml with allowBuilds when mi
   // Keys with reserved YAML prefixes (e.g. @scope) may be quoted — parse
   // back and assert the effective map entry, which is what pnpm reads.
   const doc = yaml.load(yamlText)
-  assert.equal(doc.allowBuilds[info.keys[0]], true)
+  for (const key of info.keys) assert.equal(doc.allowBuilds[key], true, key)
+  assert.equal(doc.allowBuilds['@linxin666/dsh-chat-recovery'], true)
+  assert.equal(doc.allowBuilds['@linxin666/dsh-chat-recovery@git+https://github.com/linxin666/dsh-chat-recovery.git'], true)
 
   const manifest = JSON.parse(fs.readFileSync(res.manifestPath, 'utf8'))
   assert.deepEqual(manifest.pnpm.onlyBuiltDependencies, ['@linxin666/dsh-chat-recovery'])
@@ -217,3 +227,58 @@ test('authorizeBuildScripts with no keys/names writes nothing new', () => {
   assert.deepEqual(res.keys, [])
   assert.deepEqual(res.names, [])
 })
+
+
+// ---- version-suffixed ignored builds + stable git keys ---- //
+
+const IGNORED_VERSIONED_OUTPUT = [
+  'Progress: resolved 8, reused 7, downloaded 1, added 8, done',
+  '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cloudflared@0.7.3, esbuild@0.25.0',
+  '',
+  'Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.',
+  'dsh: pnpm failed in profile directory C:\\Users\\t\\.dsh\\profiles\\web',
+].join('\n')
+
+test('parseBlockedBuildInfo strips version suffixes from ignored-build names', () => {
+  const info = parseBlockedBuildInfo(IGNORED_VERSIONED_OUTPUT)
+  assert.deepEqual(info.keys, [])
+  assert.deepEqual(info.names, ['cloudflared', 'esbuild'])
+})
+
+test('parseBlockedBuildInfo derives the stable git+https allowBuilds key for git-dep failures', () => {
+  const info = parseBlockedBuildInfo(GIT_BLOCKED_OUTPUT)
+  assert.ok(
+    info.keys.includes('dsh-visualizer@git+https://github.com/abidhmuhsin/dsh-visualizer.git'),
+    'stable key must be derived from the codeload URL',
+  )
+  assert.ok(info.keys.includes(GIT_BLOCKED_OUTPUT.match(/  ([^\n]+): true/)[1]), 'pinned codeload key kept')
+  assert.ok(info.names.includes('dsh-visualizer'))
+})
+
+test('authorizeBuildScripts writes bare names into allowBuilds (pnpm 11 path)', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, 'packages:\n  - .\n')
+  writeManifest(dir, { name: 'dsh-profile-web', private: true, dependencies: {} })
+
+  const res = authorizeBuildScripts('web', { keys: [], names: ['cloudflared'] })
+
+  const doc = yaml.load(fs.readFileSync(res.workspacePath, 'utf8'))
+  assert.equal(doc.allowBuilds.cloudflared, true, 'bare name must be allowed in pnpm-workspace.yaml')
+  const manifest = JSON.parse(fs.readFileSync(res.manifestPath, 'utf8'))
+  assert.deepEqual(manifest.pnpm.onlyBuiltDependencies, ['cloudflared'])
+})
+
+test('authorizeBuildScripts git-dep keys include stable + pinned + bare forms', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, 'packages:\n  - .\n')
+  writeManifest(dir, { name: 'dsh-profile-web', private: true, dependencies: {} })
+
+  const info = parseBlockedBuildInfo(SCOPED_GIT_BLOCKED_OUTPUT)
+  const res = authorizeBuildScripts('web', info)
+
+  const doc = yaml.load(fs.readFileSync(res.workspacePath, 'utf8'))
+  assert.equal(doc.allowBuilds['@linxin666/dsh-chat-recovery@git+https://github.com/linxin666/dsh-chat-recovery.git'], true)
+  assert.ok(Object.keys(doc.allowBuilds).some((k) => k.startsWith('@linxin666/dsh-chat-recovery@https://codeload.github.com/')))
+  assert.equal(doc.allowBuilds['@linxin666/dsh-chat-recovery'], true)
+})
+

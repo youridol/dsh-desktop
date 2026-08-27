@@ -102,14 +102,23 @@ function keysFromAllowBuildsExample(lines: string[]): string[] {
   return keys
 }
 
-/** Extract plain names from pnpm's `Ignored build scripts: a, b, c.` list. */
+/**
+ * Extract plain package names from pnpm's `Ignored build scripts: a, b, c.`
+ * list. Entries may carry a version suffix (`cloudflared@0.7.3`) and the
+ * sentence may end with a period followed by pnpm's "Run pnpm approve-builds"
+ * hint on the same line (older pnpm); each token is trimmed to the first
+ * whitespace-delimited word, stripped of a trailing period, and reduced to
+ * the bare name via `packageNameFromRef`.
+ */
 function namesFromIgnoredBuildScripts(output: string): string[] {
   const names: string[] = []
-  const re = /ignored build scripts:\s*([^\r\n.]+)/gi
+  const re = /ignored build scripts:?\s*([^\r\n]+)/gi
   for (const match of output.matchAll(re)) {
     for (const part of match[1].split(',')) {
-      const name = part.trim()
-      if (name) names.push(name)
+      const token = part.trim().split(/\s+/)[0]?.replace(/\.$/, '') ?? ''
+      if (token === '') continue
+      const name = packageNameFromRef(token)
+      if (name && !names.includes(name)) names.push(name)
     }
   }
   return names
@@ -147,6 +156,19 @@ export function parseBlockedBuildInfo(output: string): BlockedBuildInfo {
     if (gitPkg) {
       const name = packageNameFromRef(gitPkg[1])
       if (!names.includes(name)) names.push(name)
+      // The stable allowBuilds key pnpm 11.21+ matches is
+      // `name@git+https://github.com/owner/repo.git`, derived from the repo
+      // named by the fetched codeload URL in the same error line — NOT the
+      // commit-pinned codeload key pnpm prints as an example (which changes
+      // on every push, so the retry would fail again). Both are authorized:
+      // the pinned form covers pnpm < 11.21, the stable form covers the rest.
+      const codeload = /codeload\.github\.com\/([^/\s]+)\/([^/\s]+)\/tar\.gz\/[0-9a-f]{7,40}/i.exec(output)
+      if (codeload) {
+        const owner = codeload[1]
+        const repo = codeload[2].replace(/\.git$/, '')
+        const stable = `${name}@git+https://github.com/${owner}/${repo}.git`
+        if (!keys.includes(stable)) keys.push(stable)
+      }
     }
   }
 
@@ -247,21 +269,32 @@ export function authorizeBuildScripts(profile: string, info: BlockedBuildInfo): 
 
   let workspacePath: string
   let keysAdded: string[] = []
-  if (keys.length > 0) {
+  if (keys.length > 0 || names.length > 0) {
     const { doc } = readWorkspace(dir)
-    keysAdded = mergeAllowBuilds(doc, keys)
+    // pnpm 11 reads `allowBuilds` keys for BOTH failure shapes:
+    //  - `ERR_PNPM_IGNORED_BUILDS` matches a bare package name entry
+    //    (`cloudflared: true`, verified against pnpm 11.22);
+    //  - `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` matches the stable
+    //    `name@git+https://…` key derived in parseBlockedBuildInfo.
+    // The plain names therefore go into pnpm-workspace.yaml as well — writing
+    // them only to package.json `pnpm.onlyBuiltDependencies` is ignored by
+    // pnpm 11 and the retry would fail again with the same error.
+    keysAdded = mergeAllowBuilds(doc, [...keys, ...names])
     workspacePath = writeWorkspace(dir, doc)
     appLog.info(
-      `pnpm build policy: allowed ${keysAdded.length} spec(s) in ${WORKSPACE_FILE} (profile ${profile})`,
+      `pnpm build policy: allowed ${keysAdded.length} key(s) in ${WORKSPACE_FILE} (profile ${profile})`,
     )
   } else {
     workspacePath = path.join(dir, WORKSPACE_FILE)
     appLog.info(`pnpm build policy: no specs to allow for profile ${profile}`)
   }
 
+  // pnpm 9 / pnpm 10 <= 10.25 fallback: the plain names also land in
+  // package.json `pnpm.onlyBuiltDependencies` so older pnpm honors the
+  // same approval (newer pnpm simply ignores the key).
   const namesAdded = names.length > 0 ? mergeOnlyBuiltDependencies(profile, names) : []
   if (namesAdded.length > 0) {
-    appLog.info(`pnpm build policy: added ${namesAdded.length} name(s) to pnpm.onlyBuiltDependencies`)
+    appLog.info(`pnpm build policy: added ${namesAdded.length} name(s) to pnpm.onlyBuiltDependencies (pnpm 9/10 fallback)`)
   }
 
   return { workspacePath, manifestPath: resolveProfileManifestPath(profile), keys: keysAdded, names: namesAdded }

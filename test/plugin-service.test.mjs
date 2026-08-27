@@ -492,8 +492,9 @@ test('installer: pnpm blocked build scripts throw BUILD_BLOCKED with parsed keys
     () => installPlugin({ name: 'github:abidhmuhsin/dsh-visualizer', source: 'npm' }, exec),
     (err) =>
       isBuildBlockedError(err) &&
-      err.keys.length === 1 &&
+      err.keys.length === 2 &&
       err.keys[0].startsWith('dsh-visualizer@https://') &&
+      err.keys.includes('dsh-visualizer@git+https://github.com/abidhmuhsin/dsh-visualizer.git') &&
       /放行构建脚本/.test(err.message),
   )
 })
@@ -529,6 +530,6 @@ test('installer: allowBuilds retry that stays blocked surfaces BUILD_BLOCKED aga
   exec.calls = []
   await assert.rejects(
     () => installPlugin({ name: 'github:abidhmuhsin/dsh-visualizer', source: 'npm' }, exec, { allowBuilds: true }),
-    (err) => isBuildBlockedError(err) && err.keys.length === 1,
+    (err) => isBuildBlockedError(err) && err.keys.length === 2,
   )
 })
