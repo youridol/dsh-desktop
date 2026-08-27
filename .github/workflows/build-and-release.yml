@@ -104,16 +104,16 @@ jobs:
         with:
           ref: ${{ inputs.ref_to_build != '' && inputs.ref_to_build || github.sha }}
 
-      - name: Setup Node 22
+      - name: Setup Node 22 (corepack pnpm)
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          corepack: true
           cache: pnpm
 
-      - name: Enable corepack + unified pnpm toolchain
+      - name: Verify unified pnpm toolchain
         # 与 dsh-market / deepseek-harness 共用同一 pnpm 工具链（packageManager 声明）
         run: |
-          corepack enable
           pnpm --version
 
       - name: Install dependencies (pnpm install --frozen-lockfile)
