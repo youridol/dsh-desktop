@@ -1,5 +1,5 @@
 /**
- * Segmented 控件（shadcn Tabs 风格的分段切换，用于作用域 / 安装来源 / 版本来源）。
+ * Segmented 控件（DSH 原生分段控件风格，用于作用域 / 安装来源 / 版本来源）。
  * 替代分散的 radio 组，提供统一外观与可读的 active 状态管理。
  */
 import { h, text } from './element'

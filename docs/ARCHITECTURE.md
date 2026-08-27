@@ -94,7 +94,7 @@ flowchart TB
 | 托盘 | 状态提示 + 菜单（显示主窗口 / 打开控制面板 / 退出）；退出为唯一真实退出通道 | `src/main/tray.ts` |
 | 开机自启 | `app.setLoginItemSettings` 同步开关（便携版指向 exe 真实路径） | `src/main/autostart.ts` |
 | preload 桥 | 按窗口暴露窄桥接：`dshLoader`（文件协议守卫）/ `dshBall` / `dshc` | `src/preload/loader.ts`、`floating.ts`、`control.ts` |
-| 控制面板页面 | 六页签 UI（仪表盘 / 插件 / Skills / 版本 / 日志与状态 / 设置），独立初始化；页面组件统一走 `control/ui/` 组件库（shadcn/ui 风格令牌，紧凑小号） | `src/renderer/control/app.ts` + `tabs/*.ts` + `ui/*.ts` |
+| 控制面板页面 | 六页签 UI（仪表盘 / 插件 / Skills / 版本 / 日志与状态 / 设置），独立初始化；页面组件统一走 `control/ui/` 组件库（设计令牌完全对齐 deepseek-harness 原生 Web UI：dsh-client-ui-theme 暗色语义色板 / 字体 / 圆角 / 阴影，紧凑小号） | `src/renderer/control/app.ts` + `tabs/*.ts` + `ui/*.ts` |
 | 仪表盘 Widget 注册表 | 统一监控模块接口：`DashboardWidget`（id / title / refreshIntervalMs / render / refresh / dispose）+ `registerDashboardWidget`；壳不感知具体监控，新模块仅新增 `tabs/dashboard/widgets/*.ts` 并注册 | `src/renderer/control/tabs/dashboard/widget.ts` + `tabs/dashboard.ts` |
 | 悬浮球页面 | 指针捕获：< 5px 位移视为单击，否则按增量拖动 | `src/renderer/floating/app.ts` |
 | loader 页面 | 准备中旋转、错误 + 重试按钮 | `src/renderer/loader/app.ts` |
@@ -243,7 +243,7 @@ dsh/manager.ts setState()（状态机迁移）
 | 决策 | 选型 | 理由（源码佐证） | 备选方案与排除理由 |
 | --- | --- | --- | --- |
 | 桌面框架 | Electron ^43.4.1 | 需要 spawn 并管理 DSH 的 Node 进程、内置 Node 兜底运行时（`src/main/dsh/nodebin.ts`）、系统托盘 / 登录自启 / 单实例（`tray.ts`、`autostart.ts`、`index.ts`）等原生集成；`package.json` 声明 devDependency | Tauri：仓库内无任何 Rust 代码（无 `Cargo.toml` / `src-tauri/`），且要复用 Node 生态的 npm CLI 与 CDP 调试，选 Electron 与既有代码目标一致 |
-| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | 三个页面（loader / floating / control）均为 DOM 直操作；control 页签使用项目内 `ui/` 组件库（基于 shadcn/ui 设计令牌：Button / Card / Badge / Switch / Segmented / Select / Dialog / Progress / List），打包为单个 IIFE（`scripts/build.mjs`）；减少依赖面与编译复杂度 | Vue / React：界面规模小、无需响应式组件体系，引入框架反而增加打包体积与维护面 |
+| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | 三个页面（loader / floating / control）均为 DOM 直操作；control 页签使用项目内 `ui/` 组件库（设计令牌完全对齐 deepseek-harness 原生 Web UI 主题包 `@deepseek-ai/dsh-client-ui-theme`：`--dsw-*` 暗色语义色板、字体 `--dsw-font-family` / `--ds-font-family-code`、12px 卡片 / 8px 控件 / 胶囊圆角、lv1-3 阴影；组件 Button / Card / Badge / Switch / Segmented / Select / Dialog / Progress / List），打包为单个 IIFE（`scripts/build.mjs`）；减少依赖面与编译复杂度 | Vue / React：界面规模小、无需响应式组件体系，引入框架反而增加打包体积与维护面 |
 | 编译 / 打包 | esbuild ^0.28.2 | `package.json` devDependency；`scripts/build.mjs` 单文件输出 main（CJS/node）、preload、renderer（IIFE/browser） | tsc 直出：需要与 electron-builder 的 asar 打包衔接，esbuild 一步完成 bundle 且无 tree-shaking 负担 |
 | 运行时分发 | 单 tgz 经 extraResources（`build-assets/dsh-runtime.tgz`） | electron-builder 的文件收集器会静默丢弃 `node_modules` 树、静态依赖分析漏掉 peer / 动态加载包（`electron-builder.yml` 注释 + `scripts/fetch-dsh.mjs` 头注释），单包分发 + 首启解压绕开该限制 | asarUnpack 全量解包：不兼容 peer 加载且体积膨胀，已废弃（`README.original.md` 中旧描述，新版打包不再使用） |
 | 解压工具 | Windows 自带 `System32\tar.exe` | Win10 1803+ 内置 bsdtar，用户机零依赖（`src/main/dsh/install.ts` 注释） | Node tar 依赖：便携版与安装版均不应要求额外工具链 |

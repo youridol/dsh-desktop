@@ -1,5 +1,5 @@
 /**
- * Badge 组件（shadcn/ui 风格）。
+ * Badge 组件（DSH 原生 tag 风格）。
  * 统一状态/来源标签：default / ok / warn / err / accent / muted。
  */
 import { h, text } from './element'

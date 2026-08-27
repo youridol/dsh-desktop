@@ -19,7 +19,7 @@ dsh-desktop 对 deepseek-harness 采取**完全放行、行为优先**原则：
 ## 功能特性
 
 - **冷启动即用**：双击启动后自动拉起捆绑的 DSH 服务（`dsh web --no-open --port …`，见 `src/main/dsh/manager.ts`），主窗口在服务就绪后自动加载 Web UI；10 秒内未就绪显示错误页与重试按钮（`READY_TIMEOUT_MS`，`src/main/dsh/manager.ts`）。
-- **悬浮球控制面板**：主窗口右下角悬浮球（可拖动、位置记忆，`src/main/windows/floating.ts`），单击开关独立子窗口控制面板（`src/main/windows/control.ts`，无任务栏项、随主窗口隐藏与恢复）。
+- **悬浮球控制面板**：主窗口右下角悬浮球（可拖动、位置记忆，`src/main/windows/floating.ts`），单击开关独立子窗口控制面板（`src/main/windows/control.ts`，无任务栏项、随主窗口隐藏与恢复）；控制面板 UI 设计令牌与组件表现完全对齐 deepseek-harness 原生 Web UI（`src/renderer/control/style.css`，取自官方主题包 `@deepseek-ai/dsh-client-ui-theme` 暗色语义色板 / 字体 / 圆角 / 阴影，左侧导航栏布局）。
 - **仪表盘（Dashboard）**（`src/renderer/control/tabs/dashboard.ts` + `tabs/dashboard/widgets/`）：控制面板默认页签，统一监控 DSH 服务运行状态、插件概要、版本概要与最近异常；监控模块经统一 Widget 注册表挂载，新增监控模块无需改核心架构。
 - **Skills 管理**（`src/main/services/skills/` + `src/renderer/control/tabs/skills.ts`）：独立 Skills 页签，全部能力在 dsh-desktop 内自管理，不修改 deepseek-harness 上游源码：
   - 自定义 Skills 仓库（默认示例 `https://github.com/mattpocock/skills`），添加 / 编辑 / 删除 / 启用停用 / 拉取刷新 / 全部同步；
@@ -79,7 +79,7 @@ dsh plugin --profile web add dshmarket
 | 构建工具 | esbuild | ^0.28.2 | `package.json`、`scripts/build.mjs` |
 | 打包工具 | electron-builder | ^26.15.3 | `package.json`、`electron-builder.yml` |
 | 包管理器 | npm（lockfile 版本 3） | ≥ 20（CI 用 22） | `package-lock.json`、`.github/workflows/build-and-release.yml` |
-| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | — | `src/renderer/`、`scripts/build.mjs` |
+| 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架；控制面板 UI 对齐 DSH 原生 Web UI 设计系统（`--dsw-*` 令牌） | — | `src/renderer/`、`scripts/build.mjs` |
 | 运行时依赖（bundled） | `js-yaml`（pnpm-workspace.yaml 策略解析，esbuild 打入 `dist/main.js`，打包产物无运行时 node_modules） | ^4.3 | `package.json` `dependencies`、`src/main/services/dsh/pnpmBuildPolicy.ts` |
 | 工具链环境支持 | npm / npx / pnpm 标准目录发现 + PATH 合并（仅环境准备，不拦截 / 改写命令） | — | `src/main/dsh/toolchain.ts`、`src/main/dsh/nodebin.ts` |
 | 捆绑运行时 | `@deepseek-ai/dsh` + 内置 npm CLI | 随上游 Release | `scripts/fetch-dsh.mjs` |

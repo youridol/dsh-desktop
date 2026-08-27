@@ -1,5 +1,5 @@
 /**
- * Dialog 组件（shadcn/ui 风格）。
+ * Dialog 组件（DSH 原生对话框风格）。
  * 统一替代原生 confirm / alert：标题 + 消息 + 主/次按钮，
  * 返回 Promise，支持 Esc / 点击遮罩取消。
  */

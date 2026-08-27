@@ -7,29 +7,39 @@
   <title>DSH 控制面板</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body>
+<body data-ds-dark-theme>
   <header id="titlebar">
-    <span class="title">DSH 控制面板</span>
+    <span class="title"><span class="brand-dot"></span>DSH 控制面板</span>
     <button id="closeBtn" title="关闭">✕</button>
   </header>
 
-  <nav id="tabs">
-    <button class="tab active" data-tab="dashboard">仪表盘</button>
-    <button class="tab" data-tab="plugins">插件</button>
-    <button class="tab" data-tab="skills">Skills</button>
-    <button class="tab" data-tab="versions">版本</button>
-    <button class="tab" data-tab="status">日志与状态</button>
-    <button class="tab" data-tab="settings">设置</button>
-  </nav>
+  <div id="shell">
+    <nav id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">总览</div>
+        <button class="tab active" data-tab="dashboard"><span class="tab-icon">◧</span><span>仪表盘</span></button>
+        <button class="tab" data-tab="status"><span class="tab-icon">◉</span><span>日志与状态</span></button>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">管理</div>
+        <button class="tab" data-tab="plugins"><span class="tab-icon">▦</span><span>插件</span></button>
+        <button class="tab" data-tab="skills"><span class="tab-icon">✦</span><span>Skills</span></button>
+        <button class="tab" data-tab="versions"><span class="tab-icon">↺</span><span>版本</span></button>
+      </div>
+      <div class="sidebar-foot">
+        <button class="tab" data-tab="settings"><span class="tab-icon">⚙</span><span>设置</span></button>
+      </div>
+    </nav>
 
-  <main id="content">
-    <section id="pane-dashboard" class="pane active"></section>
-    <section id="pane-plugins" class="pane"></section>
-    <section id="pane-skills" class="pane"></section>
-    <section id="pane-versions" class="pane"></section>
-    <section id="pane-status" class="pane"></section>
-    <section id="pane-settings" class="pane"></section>
-  </main>
+    <main id="content">
+      <section id="pane-dashboard" class="pane active"></section>
+      <section id="pane-plugins" class="pane"></section>
+      <section id="pane-skills" class="pane"></section>
+      <section id="pane-versions" class="pane"></section>
+      <section id="pane-status" class="pane"></section>
+      <section id="pane-settings" class="pane"></section>
+    </main>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script src="./app.js"></script>

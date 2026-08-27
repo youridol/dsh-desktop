@@ -1,5 +1,5 @@
 /**
- * Card 组件（shadcn/ui 风格）。
+ * Card 组件（DSH 原生 rowCard 风格）。
  * 统一卡片结构：card-head（card-title + card-actions）+ card-body。
  * 页面只负责内容与行为，间距/边框/标题样式全部收敛到 style.css。
  */

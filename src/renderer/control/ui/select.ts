@@ -1,5 +1,5 @@
 /**
- * Select 组件（shadcn/ui 风格：紧凑原生 select，仅统一外观）。
+ * Select 组件（DSH 原生 select 风格：紧凑原生 select，仅统一外观）。
  */
 import { h, text } from './element'
 

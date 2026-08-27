@@ -1,5 +1,5 @@
 /**
- * Button 组件（shadcn/ui 风格，紧凑小号）。
+ * Button 组件（DSH 原生胶囊按钮风格，紧凑小号）。
  * 统一按钮样式与交互，禁止在页面中直接拼写 <button class="btn ..."> 的变体。
  */
 import { h, type UiChild } from './element'

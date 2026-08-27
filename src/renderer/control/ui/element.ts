@@ -3,7 +3,7 @@
  *
  * 所有渲染层代码应当通过本模块构造 DOM，避免在页面中散落
  * document.createElement / innerHTML 字符串拼接，保证结构一致、
- * 可读、可维护（shadcn/ui 风格的基础 helpers，无框架依赖）。
+ * 可读、可维护（对齐 DSH 原生 Web UI 设计令牌的基础 helpers，无框架依赖）。
  */
 export type UiChild = Node | string | number | null | undefined | false
 

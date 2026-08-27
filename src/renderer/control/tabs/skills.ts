@@ -2,7 +2,7 @@
  * Skills 管理：仓库管理、作用域（全局/项目）安装生命周期、批量操作、
  * Agent 管理（全局/项目目录本机 Agent）、GitHub 搜索、更新检测与备份/导入/导出。
  *
- * 页面结构与表现统一走 control/ui 组件库（shadcn/ui 风格）；所有操作经
+ * 页面结构与表现统一走 control/ui 组件库（DSH 原生 Web UI 设计系统）；所有操作经
  * preload 桥接（window.dshc）转发到主进程 SkillsService；不读写
  * deepseek-harness 源码。
  */

@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.10.0] - 2026-08-27
+
+### 重构（控制面板 UI 完全对齐 deepseek-harness 原生 Web UI）
+
+- **设计系统重构**（src/renderer/control/style.css + index.html + src/renderer/loader/style.css）：控制面板样式从 shadcn/ui 风格改为完全对齐 deepseek-harness 原生 Web UI 设计规范，设计令牌逐项取自官方主题包 @deepseek-ai/dsh-client-ui-theme 与内置前端 dsh-web-frontend：
+  - **颜色**：暗色语义色板（bg-base #151517 / layer-1 #232324 / layer-2 #2c2c2e / layer-3 #353638），边框 rgba(255,255,255,.06/.12/.16/.2)，主文字 #f9fafb / 次级 #cfd3d6 / 三级 #adb2b8，品牌亮色 + 业务深蓝 deepseek-450 #5686fe，状态色 green-500 #22c55e / red-400 #f25a5a / amber-500 #f59e0b；
+  - **字体**：--dsw-font-family / --ds-font-family-code（与 harness 完全一致）；
+  - **圆角 / 阴影 / 过渡**：卡片 12px · 控件 8px · 胶囊 999px；--dsw-shadow-lv1/2/3；cubic-bezier(.4,0,.2,1) 的 .1s/.2s/.3s 过渡；
+  - **布局**：顶部页签改为 DSH 原生左侧导航栏（#sidebar，总览 / 管理 / 设置分组 + 图标，nav 项悬停 #2c2c2e / 激活 #43454a + 深蓝 accent 条），body[data-ds-dark-theme] 对齐 harness 主题机制；
+  - **组件**：Card（12px rowCard）/ Button（18px 胶囊，主按钮白底黑字 #0f1115）/ Input / Switch / Segmented / Badge / Dialog / Toast / Progress 全部对齐 DSH 原生组件表现。
+- 组件结构（ui/ 组件库类名、data-tab 切换契约）保持公共 API 兼容，app.ts 与各页签逻辑零改动；仅修改 dsh-desktop 自身 renderer 模块，未修改 deepseek-harness 任何源码。
+
+### 验证
+
+- npm run typecheck、npm run build 与全部 135 项测试通过；Electron 实测确认 body #151517、侧边栏 #1b1b1c、激活页签 #43454a、卡片 12px、按钮 999px 胶囊、品牌点 #5686fe 等 DSH 令牌全部生效。
+
 ## [v0.9.0] - 2026-08-27
 
 ### 新增（插件市场 dsh-market 集成）

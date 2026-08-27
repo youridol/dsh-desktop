@@ -1,5 +1,5 @@
 /**
- * Switch 开关组件（shadcn/ui 风格）。
+ * Switch 开关组件（DSH 原生 Switch 风格）。
  * 统一的启用/停用开关：label.switch + track，事件经 onChange 回调上抛。
  */
 import { h } from './element'

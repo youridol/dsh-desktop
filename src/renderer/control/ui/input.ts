@@ -1,5 +1,5 @@
 /**
- * Input / Checkbox 组件（shadcn/ui 风格，紧凑小号）。
+ * Input / Checkbox 组件（DSH 原生输入控件风格，紧凑小号）。
  * 统一输入控件与事件语义（onChange / onInput / onEnter），
  * 保持与原生控件一致的行为，仅统一外观与构造方式。
  */
