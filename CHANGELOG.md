@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.10.1] - 2026-08-27
+
+### 修复（pnpm 构建脚本放行 / 市场原生界面）
+
+- **pnpm 构建脚本放行真正生效（修复 #2 / #3）**（src/main/services/dsh/pnpmBuildPolicy.ts + DshPluginService）：
+  - **解析修复**：`Ignored build scripts: cloudflared@0.7.3` 此前被错误解析为 `cloudflared@0`（正则遇 `.` 截断），导致放行写入错误条目、重试仍失败；现按完整 token 取包名（去版本后缀 / 尾点），正确得到 `cloudflared`；
+  - **pnpm 11 兼容**：pnpm 11 只读 pnpm-workspace.yaml 的 `allowBuilds`，此前裸包名只写入 package.json `pnpm.onlyBuiltDependencies`（pnpm 11 已忽略该键），放行后重试仍报 ERR_PNPM_IGNORED_BUILDS；现裸包名同时写入 `allowBuilds`（实测 pnpm 11.22 生效），`pnpm.onlyBuiltDependencies` 保留为 pnpm 9 / pnpm 10 ≤ 10.25 兜底；
+  - **Git 插件稳定键**：ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED 此前只写入 pnpm 提示的 commit 固定 codeload 键（每次 push 变化，重试必失败）；现额外从同一错误行的 codeload URL 推导稳定键 `name@git+https://github.com/owner/repo.git`（pnpm ≥ 11.21 匹配该键，实测生效），与固定键并存覆盖新旧 pnpm；
+  - 验证：真实环境实测 `@linxin666/dsh-remote-web-ui`（cloudflared postinstall）与 `@linxin666/dsh-chat-recovery`（git prepare）在放行后均安装成功（exit 0）。
+- **市场原生界面窗口**（src/main/windows/market.ts + 控制面板插件页签 + IPC）：插件页签新增「打开市场原生界面」，打开独立窗口以与主窗口完全相同的路径加载 DSH Web UI，并自动定位到 设置 → 插件市场——直接承载 dsh-market 官方原生 React 组件（浏览 / 搜索 / 一键安装 / 更新 / 卸载），行为与主窗口完全一致；不改动 deepseek-harness / dsh-market 任何代码。已验证：设置触发器 → 「插件市场」导航 → `[data-dsh-market-root]` 原生市场 UI 成功渲染。
+  - 新增 IPC：plugins:marketWindowOpen（ipc.ts + preload/control.ts + renderer/api.ts 同步更新）；退出时销毁市场窗口。
+
+### 验证
+
+- 新增 / 更新 test/pnpm-build-policy.test.mjs 与 test/plugin-service.test.mjs 用例（版本后缀名解析、稳定 git+https 键推导、裸包名写入 allowBuilds、三种键形式并存）；npm run typecheck、npm run build 与全部 139 项测试通过。
+- 未修改 deepseek-harness 与 dsh-market 上游任何源码。
+
 ## [v0.10.0] - 2026-08-27
 
 ### 重构（控制面板 UI 完全对齐 deepseek-harness 原生 Web UI）
