@@ -245,16 +245,6 @@ function buildBlockedMessage(result: { keys: string[]; names: string[] }): HTMLE
   )
 }
 
-/** Build the confirm dialog body listing refs pnpm's minimumReleaseAge gate rejects. */
-function buildReleaseAgeMessage(result: { refs: string[] }): HTMLElement {
-  const detail = result.refs
-  return h('div', {},
-    h('p', {}, text('pnpm 的 minimumReleaseAge 供应链策略拦截了近期发布的包（24 小时内），导致安装失败。')),
-    h('p', {}, text('点击「放行并重试」会将以下包写入本机 Profile 的 minimumReleaseAgeExclude，并自动重新安装：')),
-    h('div', { class: 'mono' }, ...(detail.length > 0 ? detail.map((k) => h('div', {}, text(k))) : [text('（未识别到具体包名，将直接重试）')])),
-  )
-}
-
 /** Shared success handling for the first attempt and the retry paths. */
 function finishInstall(
   name: string,
@@ -314,49 +304,8 @@ async function installPlugin(): Promise<void> {
         return
       }
       const retried = await bridge().addPlugin({ ...opts, allowBuilds: true })
-      if (retried.status === 'build-blocked' || retried.status === 'release-age-blocked') {
-        toastFn(`放行后仍被拦截：${retried.message}`, true)
-        return
-      }
-      finishInstall(name, source, profile, retried.plugins)
-      return
-    }
-    if (result.status === 'release-age-blocked') {
-      const allow = await confirmDialog({
-        title: 'minimumReleaseAge 供应链策略拦截',
-        message: buildReleaseAgeMessage(result),
-        confirmLabel: '放行并重试',
-        cancelLabel: '取消',
-        width: 560,
-      })
-      if (!allow) {
-        toastFn('已取消安装（未修改任何供应链策略）', true)
-        return
-      }
-      const retried = await bridge().addPlugin({ ...opts, allowReleaseAge: true })
-      if (retried.status === 'release-age-blocked') {
-        toastFn(`放行后仍被拦截：${retried.message}`, true)
-        return
-      }
       if (retried.status === 'build-blocked') {
-        // 供应链放行后又撞上构建脚本拦截：再走一次构建放行。
-        const allowBuild = await confirmDialog({
-          title: '构建脚本被 pnpm 拦截',
-          message: buildBlockedMessage(retried),
-          confirmLabel: '放行构建脚本并重试',
-          cancelLabel: '取消',
-          width: 560,
-        })
-        if (!allowBuild) {
-          toastFn('已取消安装（未修改任何构建策略）', true)
-          return
-        }
-        const retried2 = await bridge().addPlugin({ ...opts, allowBuilds: true, allowReleaseAge: true })
-        if (retried2.status === 'build-blocked' || retried2.status === 'release-age-blocked') {
-          toastFn(`放行后仍被拦截：${retried2.message}`, true)
-          return
-        }
-        finishInstall(name, source, profile, retried2.plugins)
+        toastFn(`放行后仍被拦截：${retried.message}`, true)
         return
       }
       finishInstall(name, source, profile, retried.plugins)

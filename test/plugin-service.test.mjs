@@ -20,7 +20,7 @@ await build({
   stdin: {
     contents: `
       export { listPlugins, enablePlugin, disablePlugin, exportPluginInfo, addPlugin, removePlugin, uninstallPlugin, installPlugin, validatePluginName } from './src/main/services/dsh/DshPluginService'
-      export { runInstall, validateProfile, DEFAULT_PROFILE, isBuildBlockedError, isReleaseAgeBlockedError } from './src/main/services/dsh/DshPluginInstaller'
+      export { runInstall, validateProfile, DEFAULT_PROFILE, isBuildBlockedError } from './src/main/services/dsh/DshPluginInstaller'
       export { execRaw } from './src/main/services/dsh/DshCommandExecutor'
       export { execDsh } from './src/main/services/dsh/DshCommandExecutor'
     `,
@@ -46,7 +46,6 @@ const {
   validateProfile,
   validatePluginName,
   isBuildBlockedError,
-  isReleaseAgeBlockedError,
   DEFAULT_PROFILE,
   execDsh,
   execRaw,
@@ -540,84 +539,19 @@ test('installer: allowBuilds retry that stays blocked surfaces BUILD_BLOCKED aga
   )
 })
 
-// ---- minimumReleaseAge blocked installs (pnpm 11 supply-chain gate) ----
+// ---- release-age gate: deliberately NOT intercepted ----
 
-const MIN_AGE_BLOCKED_OUTPUT = [
-  '✗ Lockfile failed supply-chain policy check (15 entries in 1.3s)',
-  '[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 2 lockfile entries failed verification:',
-  '  @linxin666/dsh-chat-recovery@0.3.5 was published at 2026-08-26T11:30:03.916Z, within the minimumReleaseAge cutoff (2026-08-26T09:20:28.567Z)',
-  '  dshmarket@1.31.2 was published at 2026-08-27T03:56:06.000Z, within the minimumReleaseAge cutoff (2026-08-26T09:20:28.567Z)',
-  '',
-].join('\n')
-
-/** Executor that fails once with minAge output, then installs. */
-function minAgeThenOkExecutor() {
-  const calls = []
-  const executor = async (args) => {
-    calls.push({ args })
-    if (calls.length === 1) {
-      return { ok: false, exitCode: 1, stdout: MIN_AGE_BLOCKED_OUTPUT, stderr: '', timedOut: false }
-    }
-    const dep = args[args.length - 1]
-    const manifest = JSON.parse(fs.readFileSync(path.join(tmpProfileDir, 'package.json'), 'utf8'))
-    if (!manifest.dependencies) manifest.dependencies = {}
-    manifest.dependencies[dep] = '^1.0.0'
-    fs.writeFileSync(path.join(tmpProfileDir, 'package.json'), JSON.stringify(manifest, undefined, 2) + '\n', 'utf8')
-    fs.mkdirSync(path.join(tmpProfileDir, 'node_modules', dep), { recursive: true })
-    fs.writeFileSync(
-      path.join(tmpProfileDir, 'node_modules', dep, 'package.json'),
-      JSON.stringify({ name: dep, version: '1.0.0', dsh: { bundle: {} } }, undefined, 2) + '\n',
-      'utf8',
-    )
-    return { ok: true, exitCode: 0, stdout: 'installed', stderr: '', timedOut: false }
-  }
-  executor.calls = calls
-  return executor
-}
-
-test('installer: pnpm minimumReleaseAge block throws RELEASE_AGE_BLOCKED with parsed refs', async () => {
+test('installer: opens the profile pnpm policy before the install runs', async () => {
   writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
-  const exec = async () => ({
-    ok: false, exitCode: 1, stdout: MIN_AGE_BLOCKED_OUTPUT, stderr: '', timedOut: false,
-  })
-  await assert.rejects(
-    () => installPlugin({ name: 'dshmarket', source: 'npm' }, exec),
-    (err) =>
-      isReleaseAgeBlockedError(err) &&
-      err.refs.includes('dshmarket@1.31.2') &&
-      err.refs.includes('@linxin666/dsh-chat-recovery@0.3.5') &&
-      /minimumReleaseAge/.test(err.message),
-  )
-})
-
-test('installer: allowReleaseAge retry authorizes excludes, re-runs and persists', async () => {
-  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
-  const exec = minAgeThenOkExecutor()
-  const plugins = await installPlugin(
-    { name: 'dshmarket', source: 'npm' },
-    exec,
-    { allowReleaseAge: true },
-  )
-  // Original + retry after authorization.
-  assert.equal(exec.calls.length, 2)
-  // The real authorization happened in pnpm-workspace.yaml.
-  const workspace = fs.readFileSync(path.join(tmpProfileDir, 'pnpm-workspace.yaml'), 'utf8')
-  assert.ok(workspace.includes('minimumReleaseAgeExclude:'))
-  assert.ok(workspace.includes('dshmarket@1.31.2'))
-  assert.ok(workspace.includes('@linxin666/dsh-chat-recovery@0.3.5'))
+  const exec = fakeExecutor()
+  const plugins = await installPlugin({ name: 'dshmarket', source: 'npm' }, exec)
+  assert.equal(exec.calls.length, 1)
   assert.equal(plugins.length, 1)
-})
-
-test('installer: allowReleaseAge retry that stays blocked surfaces RELEASE_AGE_BLOCKED again', async () => {
-  writeManifest({ name: 'dsh-profile-web', private: true, dependencies: {} })
-  const exec = async () => ({
-    ok: false, exitCode: 1, stdout: MIN_AGE_BLOCKED_OUTPUT, stderr: '', timedOut: false,
-  })
-  exec.calls = []
-  await assert.rejects(
-    () => installPlugin({ name: 'dshmarket', source: 'npm' }, exec, { allowReleaseAge: true }),
-    (err) => isReleaseAgeBlockedError(err) && err.refs.length === 2,
-  )
+  // The managed profile policy must be opened so pnpm never enforces
+  // minimumReleaseAge or build-script blocking (no interception).
+  const workspace = fs.readFileSync(path.join(tmpProfileDir, 'pnpm-workspace.yaml'), 'utf8')
+  assert.ok(workspace.includes('minimumReleaseAge: 0'))
+  assert.ok(workspace.includes('dangerouslyAllowAllBuilds: true'))
 })
 
 // ---- new install sources: pnpm / github / custom ----

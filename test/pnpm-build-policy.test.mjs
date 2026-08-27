@@ -25,7 +25,7 @@ fs.writeFileSync(stub, 'module.exports = { app: { isPackaged: false, getPath: ()
 await build({
   stdin: {
     contents: [
-      `export { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes } from './src/main/services/dsh/pnpmBuildPolicy'`,
+      `export { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes, openProfilePnpmPolicy } from './src/main/services/dsh/pnpmBuildPolicy'`,
       `export { resolveProfileDir, resolveDshHome } from './src/main/services/dsh/profilePaths'`,
     ].join('\n'),
     resolveDir: root,
@@ -40,7 +40,7 @@ await build({
   logLevel: 'silent',
 })
 
-const { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes, resolveProfileDir } =
+const { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes, openProfilePnpmPolicy, resolveProfileDir } =
   await import(pathToFileURL(outfile).href)
 
 // ---- fixtures ----
@@ -357,4 +357,55 @@ test('authorizeReleaseAgeExcludes merges into an existing exclude list and is id
 test('authorizeReleaseAgeExcludes with no refs writes nothing', () => {
   const res = authorizeReleaseAgeExcludes('web', { refs: [] })
   assert.deepEqual(res.added, [])
+})
+
+// ---- openProfilePnpmPolicy (fully open pnpm: no supply-chain interception) ----
+
+test('openProfilePnpmPolicy writes minimumReleaseAge: 0 and dangerouslyAllowAllBuilds', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, 'packages:\n  - .\nnodeLinker: hoisted\n')
+  const res = openProfilePnpmPolicy('web')
+  assert.equal(res.changed, true)
+  const doc = yaml.load(fs.readFileSync(res.workspacePath, 'utf8'))
+  assert.equal(doc.minimumReleaseAge, 0)
+  assert.equal(doc.dangerouslyAllowAllBuilds, true)
+  // Existing settings preserved.
+  assert.equal(doc.nodeLinker, 'hoisted')
+  assert.deepEqual(doc.packages, ['.'])
+})
+
+test('openProfilePnpmPolicy preserves allowBuilds / minimumReleaseAgeExclude and is idempotent', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, [
+    'packages:',
+    '  - .',
+    'nodeLinker: hoisted',
+    'autoInstallPeers: false',
+    'allowBuilds:',
+    '  cloudflared: true',
+    'minimumReleaseAgeExclude:',
+    '  - dshmarket@1.31.1 || 1.31.2',
+    "  - '@linxin666/dsh-chat-recovery@0.3.5'",
+    '',
+  ].join('\n'))
+  const first = openProfilePnpmPolicy('web')
+  assert.equal(first.changed, true)
+  const second = openProfilePnpmPolicy('web')
+  assert.equal(second.changed, false, 'second run is a no-op')
+  const doc = yaml.load(fs.readFileSync(first.workspacePath, 'utf8'))
+  assert.equal(doc.minimumReleaseAge, 0)
+  assert.equal(doc.dangerouslyAllowAllBuilds, true)
+  assert.equal(doc.allowBuilds.cloudflared, true)
+  assert.ok(doc.minimumReleaseAgeExclude.includes('dshmarket@1.31.1 || 1.31.2'))
+  assert.ok(doc.minimumReleaseAgeExclude.includes('@linxin666/dsh-chat-recovery@0.3.5'))
+})
+
+test('openProfilePnpmPolicy creates the workspace file when missing', () => {
+  const dir = profileDir()
+  const res = openProfilePnpmPolicy('web')
+  assert.equal(res.changed, true)
+  const doc = yaml.load(fs.readFileSync(res.workspacePath, 'utf8'))
+  assert.equal(doc.minimumReleaseAge, 0)
+  assert.equal(doc.dangerouslyAllowAllBuilds, true)
+  assert.deepEqual(doc.packages, ['.'])
 })

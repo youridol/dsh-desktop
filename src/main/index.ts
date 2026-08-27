@@ -17,6 +17,8 @@ import { createTray, destroyTray } from './tray'
 import { setAutoStart } from './autostart'
 // Built-in plugin presets removed — use dsh plugin --profile web CLI instead
 import * as dsh from './dsh/manager'
+import { openProfilePnpmPolicy } from './services/dsh/pnpmBuildPolicy'
+import { DEFAULT_PROFILE } from './services/dsh/DshPluginInstaller'
 import * as versions from './versions'
 import { mainWindowEvents } from './windows/main'
 
@@ -38,6 +40,18 @@ if (!gotLock) {
         `portable=${getPaths().isPortable} runtime=${getPaths().runtimeDir}`,
     )
     registerIpc()
+
+    // Open the managed profile's pnpm policy up front so NO pnpm behavior is
+    // ever intercepted by the shell — minimumReleaseAge: 0 disables the
+    // fresh-release hold and dangerouslyAllowAllBuilds runs every dependency
+    // build script. This makes the embedded dsh-market (which shares the
+    // profile) install git-hosted plugins like dsh-git-graph in one shot,
+    // even when dshmarket was already installed before this shell managed it.
+    try {
+      openProfilePnpmPolicy(DEFAULT_PROFILE)
+    } catch (err) {
+      appLog.warn(`打开 profile pnpm 策略失败（不影响使用）: ${String(err)}`)
+    }
 
     await createMainWindow()
     createFloatingBall()

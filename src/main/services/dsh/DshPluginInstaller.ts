@@ -14,10 +14,7 @@ import { execDsh, execRaw, type ExecResult } from './DshCommandExecutor'
 import {
   hasBlockedBuildSignal,
   parseBlockedBuildInfo,
-  hasReleaseAgeSignal,
-  parseReleaseAgeInfo,
   type BlockedBuildInfo,
-  type ReleaseAgeInfo,
 } from './pnpmBuildPolicy'
 import { appLog } from '../../logger'
 
@@ -49,12 +46,6 @@ export interface BuildBlockedInstallError extends PluginInstallError {
   names: string[]
 }
 
-/** minimumReleaseAge failure carrying the refs pnpm wants excluded. */
-export interface ReleaseAgeBlockedInstallError extends PluginInstallError {
-  code: 'RELEASE_AGE_BLOCKED'
-  refs: string[]
-}
-
 /** Validation error for bad install requests. */
 export function validationError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'INVALID_REQUEST', message, cause }
@@ -63,23 +54,6 @@ export function validationError(message: string, cause?: unknown): PluginInstall
 /** Failure while executing the install command. */
 export function execError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'EXEC_FAILED', message, cause }
-}
-
-/** Narrow the catch type to a structured release-age-blocked error. */
-export function isReleaseAgeBlockedError(err: unknown): err is ReleaseAgeBlockedInstallError {
-  return (
-    !!err &&
-    typeof err === 'object' &&
-    (err as PluginInstallError).code === 'RELEASE_AGE_BLOCKED'
-  )
-}
-
-/** Build a user-facing RELEASE_AGE_BLOCKED error from parsed pnpm output. */
-export function releaseAgeBlockedError(info: ReleaseAgeInfo, cause?: unknown): ReleaseAgeBlockedInstallError {
-  const detail = info.refs.join(', ')
-  const message = `pnpm 的 minimumReleaseAge 供应链策略拦截了近期发布的包` +
-    (detail ? `：${detail}` : '') + `。将其加入 minimumReleaseAgeExclude 后可重新安装`
-  return { code: 'RELEASE_AGE_BLOCKED', message, refs: info.refs, cause }
 }
 
 /** Narrow the catch type to a structured build-blocked error. */
@@ -287,9 +261,9 @@ function installerFor(source: string, exec: Executor): PluginInstaller {
  * - validates the plugin name up front, and the profile for `dsh-profile` /
  *   `pnpm`
  * - runs the source's installer (argument arrays — no shell strings)
- * - maps exec results into structured errors: build scripts blocked by pnpm /
- *   minimumReleaseAge blocked / dsh CLI missing / timeout / spawn failure /
- *   non-zero exit
+ * - maps exec results into structured errors: build scripts blocked by pnpm
+ *   (surfaced for the caller's allow-builds retry) / dsh CLI missing / timeout
+ *   / spawn failure / non-zero exit
  *
  * Returns the exec result; the caller persists metadata on success.
  */
@@ -326,15 +300,10 @@ export async function runInstall(
     throw buildBlockedError(blocked, result)
   }
 
-  // pnpm 11's supply-chain gate refused lockfile entries published within the
-  // minimumReleaseAge cutoff (e.g. a recently-updated dependency already in
-  // the profile). Surface it as a structured RELEASE_AGE_BLOCKED error so
-  // DshPluginService / the UI can authorize the exact refs and retry.
-  const releaseAge = parseReleaseAgeInfo(output)
-  if (releaseAge.refs.length > 0 || hasReleaseAgeSignal(output)) {
-    throw releaseAgeBlockedError(releaseAge, result)
-  }
-
+  // The release-age gate is deliberately NOT intercepted here: the managed
+  // profile's pnpm policy is opened (minimumReleaseAge: 0) before any install
+  // so pnpm never enforces its fresh-release hold — no RELEASE_AGE_BLOCKED
+  // path exists anymore (requirement: no minimumReleaseAge interception).
   if (result.timedOut) {
     throw execError('插件安装超时，请检查网络连接后重试', result)
   }

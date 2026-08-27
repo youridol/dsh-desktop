@@ -10,7 +10,7 @@ import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
 import * as dshMarket from './services/dsh/DshMarketService'
-import { isBuildBlockedError, isReleaseAgeBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
+import { isBuildBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
 import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
@@ -68,11 +68,10 @@ export function registerIpc(): void {
 
   // ---- plugins (dsh profile-based) ----
   ipcMain.handle('plugins:list', () => dshPlugin.listPlugins())
-  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions & { allowBuilds?: boolean; allowReleaseAge?: boolean }) => {
+  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions & { allowBuilds?: boolean }) => {
     try {
       const plugins = await dshPlugin.installPlugin(options, undefined, {
         allowBuilds: options?.allowBuilds === true,
-        allowReleaseAge: options?.allowReleaseAge === true,
       })
       return { status: 'installed', plugins }
     } catch (err) {
@@ -81,11 +80,8 @@ export function registerIpc(): void {
       if (isBuildBlockedError(err)) {
         return { status: 'build-blocked', message: err.message, keys: err.keys, names: err.names }
       }
-      // pnpm minimumReleaseAge gate rejected recently-published refs: offer an
-      // allow-release-age-and-retry action (writes minimumReleaseAgeExclude).
-      if (isReleaseAgeBlockedError(err)) {
-        return { status: 'release-age-blocked', message: err.message, refs: err.refs }
-      }
+      // pnpm minimumReleaseAge is disabled at the profile policy level
+      // (minimumReleaseAge: 0), so no release-age interception exists.
       throw err
     }
   })

@@ -11,25 +11,23 @@
  *     `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` until the exact package spec is
  *     added under `allowBuilds`; registry packages with lifecycle scripts are
  *     listed via `Ignored build scripts: ...`.
- *  2. release-age gate — pnpm >= 11 (via corepack; npm's bundled default is
- *     `minimumReleaseAge: 1440` = 24 h) rejects lockfile entries published
- *     inside the cutoff with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` /
- *     `NO_MATURE_MATCHING_VERSION` until the exact `name@version` is added
- *     under `minimumReleaseAgeExclude`. This breaks ANY install while a
+ *  2. release-age gate — pnpm >= 11 rejects lockfile entries published
+ *     inside the `minimumReleaseAge` cutoff with
+ *     `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` /
+ *     `NO_MATURE_MATCHING_VERSION`. This breaks ANY install while a
  *     recently-published dependency (e.g. `dshmarket@1.31.2`,
  *     `@linxin666/dsh-chat-recovery@0.3.5`) sits in the profile lockfile.
  *
- * dsh-desktop never edits deepseek-harness itself — it only grants pnpm
- * permission inside the profile the harness already manages, then re-runs
- * the install.
+ * dsh-desktop never edits deepseek-harness itself — it only sets the
+ * profile's OWN policy file (pnpm-workspace.yaml) the harness already reads.
  *
- * This module owns:
- *  - detecting either blocked failure from CLI output and extracting the
- *    package spec(s) pnpm wants allowlisted (build keys / release-age refs);
- *  - authorizing those specs in the profile policy: `allowBuilds` (and the
- *    pnpm 9 / pnpm 10 <= 10.25 `pnpm.onlyBuiltDependencies` fallback) for
- *    build scripts, plus `minimumReleaseAgeExclude` for the release-age gate
- *    — so the same install/build passes.
+ * dsh-desktop opens the managed profile's pnpm policy so NO pnpm behavior is
+ * ever intercepted: `minimumReleaseAge: 0` disables the fresh-release hold
+ * and `dangerouslyAllowAllBuilds: true` runs every dependency build script
+ * (see openProfilePnpmPolicy). The legacy per-ref authorizers below remain
+ * for profiles that were set up before the open policy and are kept
+ * idempotent, but the desktop's install path no longer surfaces release-age
+ * or build-script gates to the user — pnpm simply runs.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -375,6 +373,38 @@ export function authorizeBuildScripts(profile: string, info: BlockedBuildInfo): 
   }
 
   return { workspacePath, manifestPath: resolveProfileManifestPath(profile), keys: keysAdded, names: namesAdded }
+}
+
+/**
+ * Fully open pnpm's supply-chain gates inside a managed profile so no pnpm
+ * behavior is ever intercepted by dsh-desktop:
+ *
+ *  - `minimumReleaseAge: 0` disables pnpm's fresh-release hold entirely
+ *    (the gate that rejected recently-published plugins like dsh-git-graph's
+ *    dependency tree with ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION /
+ *    NO_MATURE_MATCHING_VERSION until exact refs were excluded);
+ *  - `dangerouslyAllowAllBuilds: true` runs every dependency build script,
+ *    so git-hosted plugins (their `prepare`/prepack step) install in one
+ *    shot instead of being blocked by ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED /
+ *    ERR_PNPM_IGNORED_BUILDS.
+ *
+ * This is a policy the profile itself owns (pnpm-workspace.yaml) — it never
+ * touches deepseek-harness code. Idempotent: existing content is preserved
+ * and re-running is a no-op once the keys are set.
+ */
+export function openProfilePnpmPolicy(profile: string): { workspacePath: string; changed: boolean } {
+  const dir = resolveProfileDir(profile)
+  const { doc } = readWorkspace(dir)
+  const changed = doc.minimumReleaseAge !== 0 || doc.dangerouslyAllowAllBuilds !== true
+  doc.minimumReleaseAge = 0
+  doc.dangerouslyAllowAllBuilds = true
+  const workspacePath = writeWorkspace(dir, doc)
+  if (changed) {
+    appLog.info(
+      `pnpm policy: opened profile ${profile} (minimumReleaseAge=0, dangerouslyAllowAllBuilds) in ${WORKSPACE_FILE}`,
+    )
+  }
+  return { workspacePath, changed }
 }
 
 /**

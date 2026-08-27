@@ -25,6 +25,7 @@ import {
   enablePlugin,
   type PluginView,
 } from './DshPluginService'
+import { openProfilePnpmPolicy } from './pnpmBuildPolicy'
 import { execDsh, type ExecResult } from './DshCommandExecutor'
 
 /** dsh-market 的 npm 包名（上游 dshmarket 包）。 */
@@ -157,9 +158,13 @@ export async function marketStatus(): Promise<DshMarketStatus> {
 /**
  * 确保 dshmarket 已安装并启用（复用既有 npm 安装通道）。
  *
+ * 前置：打开目标 profile 的 pnpm 策略（minimumReleaseAge: 0 +
+ * dangerouslyAllowAllBuilds），使 pnpm 的供应链闸门（新鲜发布等待期、
+ * 构建脚本拦截）完全不拦截任何安装——包括市场后续安装 git 类插件
+ * （如 dsh-git-graph）时一次性成功。
+ *
  * - 未安装 → `dsh plugin --profile web add dshmarket`（source 记为 npm，
- *   与手动安装完全一致；pnpm 构建脚本被拦时走既有 BUILD_BLOCKED 流程，
- *   但 dshmarket 是纯 registry 包，正常不会触发）；
+ *   与手动安装完全一致）；
  * - 已安装但未启用 → 加入 dsh.profile.bundles（启用后重启 DSH 生效）。
  *
  * 幂等：已安装且已启用时直接返回。
@@ -167,6 +172,12 @@ export async function marketStatus(): Promise<DshMarketStatus> {
 export async function ensureMarketInstalled(
   executor?: (args: string[], options?: { timeoutMs?: number }) => Promise<ExecResult>,
 ): Promise<{ installed: boolean; enabled: boolean; changed: boolean }> {
+  // Open the profile's pnpm policy first so the market's own installs (and
+  // every plugin install the market runs later) are never blocked by pnpm's
+  // supply-chain gates — minimumReleaseAge hold and build-script blocking
+  // are both disabled at the policy level, matching the desktop's own
+  // installPlugin behavior.
+  openProfilePnpmPolicy(MARKET_PROFILE)
   let plugin = marketPlugin()
 
   if (!plugin) {

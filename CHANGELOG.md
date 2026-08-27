@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.11.1] - 2026-08-28
+
+### 修复（插件安装：完全放行 pnpm，禁止 minimumReleaseAge / 构建脚本拦截）
+
+- **彻底放行 pnpm 供应链策略**（src/main/services/dsh/pnpmBuildPolicy.ts + DshPluginService + DshMarketService + 主进程启动）：
+  - 新增 `openProfilePnpmPolicy(profile)`：幂等写入 profile 的 pnpm-workspace.yaml `minimumReleaseAge: 0`（关闭 pnpm 的新鲜发布等待期闸门）与 `dangerouslyAllowAllBuilds: true`（运行所有依赖构建脚本），profile 自身的策略文件由 dsh-desktop 管理，不改动 deepseek-harness / dsh-market 任何代码；
+  - 调用时机：桌面壳启动时（web profile）、`installPlugin` 安装前、`ensureMarketInstalled` 打开市场前——因此内嵌的 dsh-market 原生界面安装 git 类插件（如 dsh-git-graph）也能一次性成功，不再出现「构建脚本被 pnpm 默认拦截」的循环；
+  - **移除 minimumReleaseAge 拦截**：`DshPluginInstaller` 不再把 release-age 失败映射为 RELEASE_AGE_BLOCKED，`installPlugin` / IPC `plugins:add` / 控制面板 UI 的 `allowReleaseAge` 放行对话框全部移除（`release-age-blocked` 状态与 `isReleaseAgeBlockedError` 等符号删除）；pnpm 的 minimumReleaseAge 策略在策略层被禁用，安装路径不再有任何供应链拦截；
+  - BUILD_BLOCKED 兜底保留（仅当策略被外部覆盖时触发）。
+- **验证**：真实环境复现 dsh-git-graph 安装（拷贝 web profile + 打开策略）→ `dsh plugin add github:zhu1090093659/dsh-web-ui#path:/packages/dsh-git-graph` 一次成功（exit 0、构建产物 lib/ 就位、自动加入 bundles）；新增 `openProfilePnpmPolicy` 单测与「安装前打开策略」断言；npm run typecheck、npm run build 与全部 155 项测试通过。
+
 ## [v0.11.0] - 2026-08-27
 
 ### 修复（dsh-client-ui-git-graph 安装失败 / 插件模块重构）

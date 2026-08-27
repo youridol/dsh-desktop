@@ -19,12 +19,11 @@ import {
   runInstall,
   validationError,
   isBuildBlockedError,
-  isReleaseAgeBlockedError,
   DEFAULT_PROFILE,
   type InstallPluginOptions,
   type PluginInstallSource,
 } from './DshPluginInstaller'
-import { authorizeBuildScripts, authorizeReleaseAgeExcludes } from './pnpmBuildPolicy'
+import { authorizeBuildScripts, openProfilePnpmPolicy } from './pnpmBuildPolicy'
 import { resolveProfileDir, resolveProfileManifestPath } from './profilePaths'
 import { appLog } from '../../logger'
 
@@ -35,7 +34,6 @@ export type {
   InstallPluginOptions,
   PluginInstallError,
   BuildBlockedInstallError,
-  ReleaseAgeBlockedInstallError,
 } from './DshPluginInstaller'
 
 export interface PluginView {
@@ -252,8 +250,6 @@ export function listPlugins(): PluginListResult {
 export interface InstallPluginRunOptions {
   /** Authorize pnpm-blocked build scripts and retry once on failure. */
   allowBuilds?: boolean
-  /** Authorize pnpm minimumReleaseAge-blocked refs and retry once on failure. */
-  allowReleaseAge?: boolean
 }
 
 /** Run the install and persist metadata on success (shared by retries). */
@@ -302,6 +298,12 @@ async function installAndPersist(
  * `pnpm.onlyBuiltDependencies`), then the install is re-run automatically —
  * the authorization is a real policy edit, never a UI-only state change.
  *
+ * Before any install the managed profile's pnpm policy is opened
+ * (`minimumReleaseAge: 0` + `dangerouslyAllowAllBuilds: true` in
+ * pnpm-workspace.yaml), so pnpm's own supply-chain gates never intercept a
+ * plugin install — the desktop never blocks on minimumReleaseAge and never
+ * asks the user to approve build scripts for git-hosted plugins.
+ *
  * @throws PluginInstallError on failure — never writes a success record.
  * @param options install request (source selects the strategy in the
  *   installer layer)
@@ -314,6 +316,10 @@ export async function installPlugin(
   runOpts: InstallPluginRunOptions = {},
 ): Promise<PluginView[]> {
   const exec = executor ?? execDsh
+  // Fully open pnpm's supply-chain gates in the target profile so no pnpm
+  // behavior is intercepted (release-age hold and build-script blocking are
+  // both disabled at the policy level).
+  openProfilePnpmPolicy(options.profile ?? DEFAULT_PROFILE)
   try {
     return await installAndPersist(options, exec)
   } catch (err) {
@@ -322,10 +328,6 @@ export async function installPlugin(
         keys: err.keys,
         names: err.names,
       })
-      return installAndPersist(options, exec)
-    }
-    if (runOpts.allowReleaseAge && isReleaseAgeBlockedError(err)) {
-      authorizeReleaseAgeExcludes(options.profile ?? DEFAULT_PROFILE, { refs: err.refs })
       return installAndPersist(options, exec)
     }
     throw err
@@ -466,4 +468,4 @@ export function formatCliError(result: ExecResult): string {
   return `命令以退出码 ${result.exitCode} 结束`
 }
 
-export { validationError, isBuildBlockedError, isReleaseAgeBlockedError }
+export { validationError, isBuildBlockedError }
