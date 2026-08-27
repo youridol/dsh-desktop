@@ -9,6 +9,7 @@ import { logEvents, recentLogs, clearLogs } from './logger'
 import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
+import * as dshMarket from './services/dsh/DshMarketService'
 import { isBuildBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
 import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
@@ -106,6 +107,14 @@ export function registerIpc(): void {
     await dsh.restart()
     return dsh.getStatus()
   })
+
+  // ---- plugin market (dsh-market 快捷配置入口) ----
+  ipcMain.handle('plugins:marketStatus', () => dshMarket.marketStatus())
+  ipcMain.handle('plugins:marketEnsure', async () => {
+    await dshMarket.ensureMarketInstalled()
+    return dshMarket.marketStatus()
+  })
+  ipcMain.handle('plugins:marketOpen', () => dshMarket.openMarket())
 
   // ---- skills (dsh-desktop 自身管理的 Skills 仓库 / 生命周期 / 备份) ----
   ipcMain.handle('skills:listRepos', () => skills.listRepositories())

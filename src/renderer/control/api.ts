@@ -46,6 +46,16 @@ export interface ExportInfo {
   description: string | null
 }
 
+export interface DshMarketStatus {
+  dshRunning: boolean
+  installed: boolean
+  enabled: boolean
+  version: string | null
+  active: boolean
+  activeVersion: string | null
+  available: boolean
+}
+
 export interface DshStatus {
   state: 'stopped' | 'starting' | 'running' | 'stopping' | 'crashed' | 'timeout' | 'error'
   port: number
@@ -211,6 +221,11 @@ export interface Bridge {
   uninstallPlugin: (id: string) => Promise<PluginListResult>
   exportPlugin: (id: string) => Promise<ExportInfo | null>
   applyPlugins: () => Promise<DshStatus>
+
+  // ---- plugin market (dsh-market 快捷配置入口) ----
+  marketStatus: () => Promise<DshMarketStatus>
+  ensureMarket: () => Promise<DshMarketStatus>
+  openMarket: () => Promise<DshMarketStatus>
 
   listVersions: () => Promise<InstalledVersion[]>
   checkUpdates: (source?: 'release' | 'commit') => Promise<{

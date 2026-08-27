@@ -24,3 +24,6 @@ desktop.ini
 
 # Local agent instructions — never committed
 /AGENTS.md
+
+# Scratch clone of dsh-market (upstream reference, never committed)
+.tmp-dsh-market/

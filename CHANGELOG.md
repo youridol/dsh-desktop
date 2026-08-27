@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.9.0] - 2026-08-27
+
+### 新增（插件市场 dsh-market 集成）
+
+- **插件市场（dsh-market）快捷配置入口**（`src/main/services/dsh/DshMarketService.ts` + 控制面板插件页签）：dsh-desktop 仅作为官方插件市场 dsh-market 的快捷入口与状态层，不重复实现市场逻辑——市场 UI 由 DSH Web UI 原生承载（设置 → 插件市场，`settings.section` 槽位 id `market`）：
+  - **本地未安装自动安装**：进入插件页签时检测到 dshmarket 缺失，自动经既有 npm 通道安装（`dsh plugin --profile web add dshmarket`，来源记为 npm，与手动安装完全一致）并写入 `dsh.profile.bundles` 启用；
+  - **一键打开插件市场**：确保已装 → 未挂载（安装/启用后未重启）自动重启 DSH → 聚焦主窗口 → 在 DSH Web UI 内打开设置对话框并定位「插件市场」区（等效用户点击的尽力而为自动化，失败静默回退为仅聚焦主窗口）；不修改 deepseek-harness / dsh-market 任何代码；
+  - **市场状态展示**：已安装版本 / 已启用 / 已挂载（探测 `/dsh-market/status`，404 = 未挂载，200 = 已挂载）；
+  - **保留原有三通道安装**（npm / npx / dsh）与已安装列表，作为市场不可用（离线等）时的本地管理兜底；
+- 新增 IPC 通道：`plugins:marketStatus` / `plugins:marketEnsure` / `plugins:marketOpen`（ipc.ts + preload/control.ts + renderer/api.ts 同步更新）。
+- 服务层经可注入 `MarketHost` 接口解耦 Electron 宿主依赖，测试注入替身、生产接真实 manager / windows/main。
+
+### 验证
+
+- 新增 `test/dsh-market-service.test.mjs` 10 个用例：缺失自动安装（复用 npm 通道且写入 bundles）、幂等、已装未启用补启用、状态读取（已装 / 未装 / 无 bundles 旧数据）、HTTP 探测（404 / 200 / 网络失败）；`npm run typecheck`、`npm run build` 与全部 135 项测试通过。
+- 未修改 deepseek-harness 与 dsh-market 上游任何源码；市场本体始终从 npm 安装上游原包（dshmarket），未来可直接随上游同步更新。
+
 ## [v0.8.4] - 2026-08-27
 
 ### 修复（npm / npx / pnpm 环境支持）

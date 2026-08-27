@@ -20,6 +20,11 @@ const api = {
   exportPlugin: (id: string) => ipcRenderer.invoke('plugins:export', id),
   applyPlugins: () => ipcRenderer.invoke('plugins:apply'),
 
+  // ---- plugin market (dsh-market 快捷配置入口) ----
+  marketStatus: () => ipcRenderer.invoke('plugins:marketStatus'),
+  ensureMarket: () => ipcRenderer.invoke('plugins:marketEnsure'),
+  openMarket: () => ipcRenderer.invoke('plugins:marketOpen'),
+
   // ---- skills ----
   listSkillRepos: () => ipcRenderer.invoke('skills:listRepos'),
   addSkillRepo: (input: { url: string; name?: string }) => ipcRenderer.invoke('skills:addRepo', input),

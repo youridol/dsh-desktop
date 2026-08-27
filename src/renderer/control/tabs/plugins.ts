@@ -2,7 +2,7 @@
  * 插件管理：通过 dsh plugin --profile <profile> CLI 安装/卸载/启用/禁用/导出。
  * 布局与组件统一走 control/ui 组件库；行为与既有 IPC 通道保持一致。
  */
-import { bridge, type PluginInstallSource, type PluginListResult, type PluginView } from '../api'
+import { bridge, type DshMarketStatus, type PluginInstallSource, type PluginListResult, type PluginView } from '../api'
 import {
   badge, button, card, confirmDialog, h, inputEl, listContainer, listHint, listItem, row,
   segmented, switchControl, text,
@@ -16,6 +16,9 @@ let profileInputEl: HTMLInputElement
 let profileRowEl: HTMLElement
 let listEl: HTMLElement
 let applyBtn: HTMLButtonElement
+let marketStatusEl: HTMLElement
+let marketOpenBtn: HTMLButtonElement
+let marketInstallBtn: HTMLButtonElement
 
 const INSTALL_SOURCE_LABELS: Record<PluginInstallSource, string> = {
   npm: 'npm',
@@ -37,6 +40,16 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
   pane = paneEl
   toastFn = toast
   pane.innerHTML = ''
+
+  const marketCard = card(
+    { title: '插件市场（dsh-market）', actions: [button({ size: 'sm', onClick: () => void refreshMarket() }, text('刷新'))] },
+    marketStatusEl = h('div', { id: 'marketStatus', class: 'kv' }),
+    row(
+      marketOpenBtn = button({ variant: 'primary', size: 'sm', onClick: () => void openMarket() }, text('打开插件市场')),
+      marketInstallBtn = button({ size: 'sm', onClick: () => void ensureMarket() }, text('安装插件市场')),
+      listHint('内置官方插件市场：浏览、搜索、一键安装社区插件。打开后显示在 DSH Web 界面（设置 → 插件市场）。'),
+    ),
+  )
 
   const installCard = card(
     { title: '安装插件（npm 包）' },
@@ -77,9 +90,11 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
     listHint('启用/停用状态保存后需重启 DSH 生效。'),
   )
 
-  pane.append(installCard, listCard, applyRow)
+  pane.append(marketCard, installCard, listCard, applyRow)
   toggleProfileRow()
   void refresh()
+  void refreshMarket()
+  void autoEnsureMarket()
 }
 
 async function refresh(): Promise<void> {
@@ -249,5 +264,99 @@ async function applyAndRestart(): Promise<void> {
   } finally {
     applyBtn.disabled = false
     applyBtn.textContent = '应用并重启 DSH'
+  }
+}
+
+
+// ---- plugin market (dsh-market 快捷配置入口) ----
+
+/** 刷新市场状态展示。 */
+async function refreshMarket(): Promise<void> {
+  try {
+    const status = await bridge().marketStatus()
+    renderMarketStatus(status)
+  } catch (err) {
+    toastFn(`获取插件市场状态失败：${String(err)}`, true)
+  }
+}
+
+function renderMarketStatus(s: DshMarketStatus): void {
+  if (!marketStatusEl) return
+  const rows: Array<[string, string]> = []
+  if (!s.installed) {
+    rows.push(['状态', '未安装'])
+  } else {
+    rows.push(['状态', s.enabled ? (s.active ? '已启用并挂载' : '已启用（重启后挂载）') : '已停用'])
+    rows.push(['版本', s.activeVersion ?? s.version ?? '—'])
+  }
+  rows.push(['DSH 服务', s.dshRunning ? '运行中' : '未运行'])
+  marketStatusEl.replaceChildren(
+    ...rows.map(([k, v]) => h('div', { class: 'row' }, text(k + '：'), text(v))),
+  )
+  const openBtn = marketOpenBtn
+  const installBtn = marketInstallBtn
+  if (openBtn) openBtn.disabled = !s.installed
+  if (installBtn) installBtn.style.display = s.installed ? 'none' : ''
+}
+
+/** 打开插件市场：确保已装（缺失自动安装）→ 重启生效 → 在主窗口打开市场。 */
+async function openMarket(): Promise<void> {
+  if (!marketOpenBtn) return
+  marketOpenBtn.disabled = true
+  marketOpenBtn.textContent = '正在打开插件市场…'
+  try {
+    const status = await bridge().openMarket()
+    renderMarketStatus(status)
+    toastFn(status.available
+      ? '插件市场已打开（DSH Web 界面）'
+      : '插件市场入口已就绪，请在主窗口点击 设置 → 插件市场')
+  } catch (err) {
+    toastFn(`打开插件市场失败：${String(err)}`, true)
+  } finally {
+    if (marketOpenBtn) {
+      marketOpenBtn.disabled = false
+      marketOpenBtn.textContent = '打开插件市场'
+    }
+  }
+}
+
+/** 手动安装插件市场（缺失时）。 */
+async function ensureMarket(): Promise<void> {
+  if (!marketInstallBtn) return
+  marketInstallBtn.disabled = true
+  marketInstallBtn.textContent = '正在安装…'
+  try {
+    const status = await bridge().ensureMarket()
+    renderMarketStatus(status)
+    toastFn(status.installed ? '插件市场已安装，打开时将重启 DSH 生效' : '插件市场安装失败', !status.installed)
+  } catch (err) {
+    toastFn(`安装插件市场失败：${String(err)}`, true)
+  } finally {
+    if (marketInstallBtn) {
+      marketInstallBtn.disabled = false
+      marketInstallBtn.textContent = '安装插件市场'
+    }
+  }
+}
+
+/** 本地环境没有 dsh-market 时自动安装（进入插件页签时触发一次）。 */
+let marketAutoEnsureRan = false
+async function autoEnsureMarket(): Promise<void> {
+  if (marketAutoEnsureRan) return
+  marketAutoEnsureRan = true
+  try {
+    const status = await bridge().marketStatus()
+    if (!status.installed) {
+      toastFn('检测到本地未安装插件市场，正在自动安装 dshmarket…')
+      const after = await bridge().ensureMarket()
+      renderMarketStatus(after)
+      if (after.installed) {
+        toastFn('插件市场已自动安装，点击「打开插件市场」重启 DSH 后生效')
+      }
+    } else {
+      renderMarketStatus(status)
+    }
+  } catch (err) {
+    toastFn(`自动安装插件市场失败：${String(err)}`, true)
   }
 }

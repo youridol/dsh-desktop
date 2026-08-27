@@ -84,7 +84,7 @@ flowchart TB
 | Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals`；所有 harness 子进程 env 经工具链 PATH 合并 | `src/main/dsh/nodebin.ts` |
 | 工具链环境支持 | npm / npx / pnpm 标准目录发现（Node 安装目录 / `npm prefix -g` 全局 bin / `%APPDATA%\npm` / `%LOCALAPPDATA%\pnpm` / `~/.pnpm/bin` / nvm / volta）+ PATH 去重合并；纯环境准备，不拦截 / 改写命令 | `src/main/dsh/toolchain.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
-| 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh 由 `DshPluginInstaller.ts` 策略层分发，插件名支持 npm 包或 GitHub/git 地址）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出；pnpm 构建脚本拦截时经 `pnpmBuildPolicy.ts` 解析精确 spec 并授权（`allowBuilds` + `onlyBuiltDependencies`）后自动重装 | `src/main/services/dsh/DshPluginService.ts` + `DshPluginInstaller.ts` + `pnpmBuildPolicy.ts` + `profilePaths.ts` |
+| 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh 由 `DshPluginInstaller.ts` 策略层分发，插件名支持 npm 包或 GitHub/git 地址）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出；pnpm 构建脚本拦截时经 `pnpmBuildPolicy.ts` 解析精确 spec 并授权（`allowBuilds` + `onlyBuiltDependencies`）后自动重装；dsh-market 快捷入口（`DshMarketService.ts`）：本地未装自动安装（复用 npm 通道）、状态探测（/dsh-market/status）、一键在主窗口打开 设置 → 插件市场（等效用户点击定位，不修改上游） | `src/main/services/dsh/DshPluginService.ts` + `DshPluginInstaller.ts` + `pnpmBuildPolicy.ts` + `profilePaths.ts` + `DshMarketService.ts` |
 | Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global/project 清单 = index.json + 磁盘 Agent 扫描合并（已有 Skills 直接可见，Agent 管理模块同时区分展示全局/项目 Agent）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
 | 版本管理 | 更新检查（release / commit 双通道）、下载并切换、回退、删除 | `src/main/versions.ts` |
 | 主窗口 | loader 页 / DSH UI 双向导航；默认 1600×900（可缩放，最小 960×600）；最小化与关闭隐藏到托盘；对 DSH Web UI 完全放行（不拦截弹窗 / 新窗口，harness 行为原生优先） | `src/main/windows/main.ts` |
@@ -225,6 +225,19 @@ dsh/manager.ts setState()（状态机迁移）
   → 导入校验格式/版本/路径/冲突后 applyExportBundle：仓库已存在跳过、技能已安装默认冲突、可覆盖
   → 本地备份写入 <runtime>/skills/backups/backup-<ts>/backup.json
 ```
+### 3.7 插件市场（dsh-market）快捷入口流程（DshMarketService）
+
+```
+打开（plugins:marketOpen，DshMarketService.openMarket）
+  → ensureMarketInstalled：本地未装 → 复用 npm 通道 dsh plugin --profile web add dshmarket
+      （来源记为 npm，与手动安装一致）；已装未启用 → 写入 dsh.profile.bundles
+  → DSH 未运行 → manager.start()；市场未挂载（安装/启用后未重启）→ manager.restart()
+  → marketStatus()：探测 /dsh-market/status（200 = 已挂载，404 = 未挂载）
+  → 聚焦主窗口（showMainWindow + syncNavigation）→ 在主窗口执行脚本点击
+      设置触发器（button[aria-haspopup=dialog]）→ 点击「插件市场」导航项
+      （等效用户点击；失败静默回退为仅聚焦主窗口）
+```
+
 ## 4. 技术选型说明
 
 | 决策 | 选型 | 理由（源码佐证） | 备选方案与排除理由 |
@@ -253,7 +266,7 @@ dsh-desktop/
 ├── src/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
 │   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）、工具链环境支持（toolchain）
-│   │   ├── services/dsh/       # dsh 插件管理（DshPluginService / DshPluginInstaller / pnpmBuildPolicy / profilePaths）
+│   │   ├── services/dsh/       # dsh 插件管理（DshPluginService / DshPluginInstaller / pnpmBuildPolicy / profilePaths）+ 插件市场快捷入口（DshMarketService）
 │   │   ├── services/skills/      # Skills 管理（validation / discovery / harnessPaths / gitRunner / repositoryManager / lifecycle / backup / skillsService）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板 + supervisor 窗口守护
 │   ├── preload/                # 三个窗口的窄桥接（contextIsolation 开启）
