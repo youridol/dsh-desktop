@@ -14,6 +14,8 @@ import { isBuildBlockedError, type InstallPluginOptions } from './services/dsh/D
 import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
+import * as marketWindow from './windows/market'
+import { appLog } from './logger'
 import { ballClicked, dragBallBy } from './windows/floating'
 import { refreshServiceProbe } from './windows/main'
 
@@ -115,6 +117,19 @@ export function registerIpc(): void {
     return dshMarket.marketStatus()
   })
   ipcMain.handle('plugins:marketOpen', () => dshMarket.openMarket())
+  // 打开市场原生界面窗口（独立 BrowserWindow 承载 DSH Web UI 的
+  // 设置 → 插件市场，100% 原生 dsh-market 组件）。
+  ipcMain.handle('plugins:marketWindowOpen', () => {
+    const ok = marketWindow.openMarketWindow()
+    if (!ok) {
+      // DSH 未运行：启动后再打开。
+      void dsh.start().then(() => {
+        const started = marketWindow.openMarketWindow()
+        if (!started) appLog.warn('marketWindowOpen: DSH 未就绪，无法打开市场窗口')
+      })
+    }
+    return ok
+  })
 
   // ---- skills (dsh-desktop 自身管理的 Skills 仓库 / 生命周期 / 备份) ----
   ipcMain.handle('skills:listRepos', () => skills.listRepositories())

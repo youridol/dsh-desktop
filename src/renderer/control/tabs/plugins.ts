@@ -45,9 +45,9 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
     { title: '插件市场（dsh-market）', actions: [button({ size: 'sm', onClick: () => void refreshMarket() }, text('刷新'))] },
     marketStatusEl = h('div', { id: 'marketStatus', class: 'kv' }),
     row(
-      marketOpenBtn = button({ variant: 'primary', size: 'sm', onClick: () => void openMarket() }, text('打开插件市场')),
+      marketOpenBtn = button({ variant: 'primary', size: 'sm', onClick: () => void openMarket() }, text('在主窗口打开')),
       marketInstallBtn = button({ size: 'sm', onClick: () => void ensureMarket() }, text('安装插件市场')),
-      listHint('内置官方插件市场：浏览、搜索、一键安装社区插件。打开后显示在 DSH Web 界面（设置 → 插件市场）。'),
+      listHint('内置官方插件市场：浏览、搜索、一键安装社区插件。'),
     ),
   )
 
@@ -90,7 +90,15 @@ export function initPlugins(paneEl: HTMLElement, toast: (msg: string, err?: bool
     listHint('启用/停用状态保存后需重启 DSH 生效。'),
   )
 
-  pane.append(marketCard, installCard, listCard, applyRow)
+  const embedCard = card(
+    { title: '市场原生界面（dsh-market Web UI）' },
+    row(
+      button({ variant: 'primary', size: 'sm', onClick: () => void openNativeMarketWindow() }, text('打开市场原生界面')),
+      listHint('打开独立窗口，直接承载 dsh-market 原生 Web UI（DSH 设置 → 插件市场 同款组件）：浏览、搜索、一键安装、更新与卸载全部为官方原生行为，操作结果实时写入 Web Profile。'),
+    ),
+  )
+
+  pane.append(marketCard, embedCard, installCard, listCard, applyRow)
   toggleProfileRow()
   void refresh()
   void refreshMarket()
@@ -360,3 +368,29 @@ async function autoEnsureMarket(): Promise<void> {
     toastFn(`自动安装插件市场失败：${String(err)}`, true)
   }
 }
+
+// ---- 市场原生界面（独立窗口承载 dsh-market 原生 Web UI） ----
+
+/**
+ * 打开市场原生界面窗口。
+ *
+ * dsh-market 的原生 UI 是注册在 DSH 设置对话框 settings.section 槽位
+ * （id = 'market'）里的 React 组件，没有独立 URL，且 DSH SPA 在 webview
+ * guest 中无法可靠运行。因此这里打开一个独立窗口，以与主窗口完全相同的
+ * 路径加载真实 DSH Web UI，并自动定位到 设置 → 插件市场——所有交互仍是
+ * dsh-market 官方 React 组件（浏览 / 搜索 / 一键安装 / 更新 / 卸载），
+ * 行为与主窗口完全一致，不改造 deepseek-harness / dsh-market。
+ */
+async function openNativeMarketWindow(): Promise<void> {
+  try {
+    const ok = await bridge().openMarketWindow()
+    if (ok) {
+      toastFn('市场原生界面窗口已打开（DSH Web UI → 设置 → 插件市场）')
+    } else {
+      toastFn('正在启动 DSH 服务，就绪后自动打开市场…')
+    }
+  } catch (err) {
+    toastFn(`打开市场原生界面失败：${String(err)}`, true)
+  }
+}
+

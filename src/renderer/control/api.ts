@@ -226,6 +226,8 @@ export interface Bridge {
   marketStatus: () => Promise<DshMarketStatus>
   ensureMarket: () => Promise<DshMarketStatus>
   openMarket: () => Promise<DshMarketStatus>
+  /** 打开市场原生界面窗口（独立 BrowserWindow 承载 DSH Web UI → 设置 → 插件市场）。 */
+  openMarketWindow: () => Promise<boolean>
 
   listVersions: () => Promise<InstalledVersion[]>
   checkUpdates: (source?: 'release' | 'commit') => Promise<{

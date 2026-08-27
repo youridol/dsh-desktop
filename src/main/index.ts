@@ -13,6 +13,7 @@ import { registerIpc } from './ipc'
 import { createMainWindow, showMainWindow } from './windows/main'
 import { createFloatingBall, syncBallVisibility, destroyFloatingBall } from './windows/floating'
 import { createControlPanel, destroyControlPanel } from './windows/control'
+import { destroyMarketWindow } from './windows/market'
 import { createTray, destroyTray } from './tray'
 import { setAutoStart } from './autostart'
 // Built-in plugin presets removed — use dsh plugin --profile web CLI instead
@@ -74,6 +75,7 @@ if (!gotLock) {
     dsh.shutdownSync()
     destroyFloatingBall()
     destroyControlPanel()
+    destroyMarketWindow()
     destroyTray()
   })
 

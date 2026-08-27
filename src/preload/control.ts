@@ -24,6 +24,7 @@ const api = {
   marketStatus: () => ipcRenderer.invoke('plugins:marketStatus'),
   ensureMarket: () => ipcRenderer.invoke('plugins:marketEnsure'),
   openMarket: () => ipcRenderer.invoke('plugins:marketOpen'),
+  openMarketWindow: () => ipcRenderer.invoke('plugins:marketWindowOpen'),
 
   // ---- skills ----
   listSkillRepos: () => ipcRenderer.invoke('skills:listRepos'),
