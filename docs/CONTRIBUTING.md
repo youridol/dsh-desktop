@@ -36,6 +36,7 @@ npm run build         # esbuild 编译，验证打包链
 - 新增 IPC 通道时同步更新对应 preload 桥（`src/preload/`）与 renderer 类型声明（`src/renderer/control/api.ts`）；
 - 插件 / Profile 相关逻辑遵循**完全放行原则**：不对 deepseek-harness 行为设限；对 pnpm 构建策略的授权统一走 `src/main/services/dsh/pnpmBuildPolicy.ts`（解析信号 / spec、写入 `allowBuilds` + `onlyBuiltDependencies`），Profile 路径统一走 `src/main/services/dsh/profilePaths.ts`，勿在业务代码中重复实现；
 - 新增 harness 交互行为时保持「数组参数直传、完整环境透传、无 `ignore-scripts` / 限制性环境变量、不拦截 Web UI 弹窗」的既有约束；
+- harness 子进程需要 npm / npx / pnpm 时，环境准备统一走 `src/main/dsh/toolchain.ts`（`withToolchain` 合并标准工具链目录到 PATH，纯环境支持、不拦截 / 改写任何包管理命令），勿在业务代码中自行拼装包管理命令或 PATH；
 - 配置项新增时同步维护 `src/main/config.ts` 的 `DEFAULT_CONFIG` 与字段校验归一化逻辑；
 - 路径 / 运行目录逻辑统一走 `src/main/paths.ts`，勿在业务代码中硬编码。
 - 新增仪表盘监控模块：在 `src/renderer/control/tabs/dashboard/widgets/` 新建文件实现 `DashboardWidget` 并用 `registerDashboardWidget` 注册，再在 `tabs/dashboard.ts` 顶部 import 生效；不要修改仪表盘壳 / app.ts / preload / IPC。

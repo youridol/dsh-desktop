@@ -11,6 +11,7 @@ DeepSeek Harness（[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai
 dsh-desktop 对 deepseek-harness 采取**完全放行、行为优先**原则：
 
 - **零限制**：不对 harness 的安装 / 执行 / 构建 / 插件 / Web UI 操作设置任何拦截、限制、沙箱、安全保护或二次阻断；命令层完整透传环境与参数（`DshCommandExecutor` / `manager` / `install` 均以数组参数直传，不注入 `ignore-scripts` 或任何限制性环境变量）。
+- **环境支持（npm / npx / pnpm 均可调用）**：harness 自行决定并调用 npm / npx / pnpm（如 `dsh plugin` 在 Profile 目录内 `spawnSync("pnpm", …)`）。dsh-desktop 在启动 harness 子进程时自动将本机标准工具链目录（Node 安装目录、`npm prefix -g` 全局 bin、`%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`~/.pnpm/bin`、nvm / volta 目录等）合并进 PATH（`src/main/dsh/toolchain.ts`）——只做环境准备，绝不代理 / 拦截 / 转换 / 重写任何包管理命令，harness 的包管理行为完全保持原生。
 - **行为优先**：主窗口承载 DSH Web UI 时不拦截弹窗 / 新窗口（`window.open` 由 harness 自身原生决定）；仅使用 harness 官方 CLI 选项（如 `--no-open`，壳层内嵌 UI 的标准集成方式）与僵死进程看门狗超时，均不构成对 harness 行为的限制。
 - **不修改上游**：从不改写 deepseek-harness 源码 / 配置；唯一写入的是 dsh-desktop 自身管理的 Profile 策略文件（如 pnpm `allowBuilds`），目的是**解除** pnpm 默认的构建脚本拦截，让安装 / 构建照常进行。
 - **输入护栏**：控制面板的插件名 / Profile 输入校验（拒绝 shell 元字符、镜像 harness 自身 profile 名校验）只保护 dsh-desktop 自己的 UI 输入，不对 harness 行为设限。
@@ -75,6 +76,7 @@ dsh plugin --profile web add dshmarket
 | 包管理器 | npm（lockfile 版本 3） | ≥ 20（CI 用 22） | `package-lock.json`、`.github/workflows/build-and-release.yml` |
 | 渲染层 | 原生 HTML / CSS / TypeScript，无前端框架 | — | `src/renderer/`、`scripts/build.mjs` |
 | 运行时依赖（bundled） | `js-yaml`（pnpm-workspace.yaml 策略解析，esbuild 打入 `dist/main.js`，打包产物无运行时 node_modules） | ^4.3 | `package.json` `dependencies`、`src/main/services/dsh/pnpmBuildPolicy.ts` |
+| 工具链环境支持 | npm / npx / pnpm 标准目录发现 + PATH 合并（仅环境准备，不拦截 / 改写命令） | — | `src/main/dsh/toolchain.ts`、`src/main/dsh/nodebin.ts` |
 | 捆绑运行时 | `@deepseek-ai/dsh` + 内置 npm CLI | 随上游 Release | `scripts/fetch-dsh.mjs` |
 | 许可证 | MIT | — | `LICENSE`、`package.json` |
 
@@ -154,6 +156,7 @@ DSH 服务由主进程 spawn（`dsh web --no-open --port <n>`），插件经 Web
 - **便携版更新（切换版本）后"版本缺失"**：运行数据与 exe 同目录，整体移动目录后仍完整；若运行目录被清理，应用自动回退到捆绑版本并提示（`src/main/dsh/manager.ts` 的 `start`）。
 - **插件无法加载**：确认插件是 npm 包且声明了 `dsh.bundle`（否则 dsh 只当普通依赖安装）；安装后点击"应用并重启 DSH"使其挂载（插件状态以 `$DSH_HOME/profiles/web/package.json` 的 `dsh.profile.bundles` 为准）。
 - **GitHub 插件安装报「build scripts are blocked by pnpm by default」**：pnpm（≥10）默认拒绝依赖构建脚本（GitHub 插件的 `prepare`）。控制面板会弹出「放行构建脚本并重试」，确认后 dsh-desktop 将该包的精确 spec 写入该 Profile 的 `pnpm-workspace.yaml` `allowBuilds`（并同步 `pnpm.onlyBuiltDependencies` 兼容 pnpm 9 / 10 ≤ 10.25）并自动重新安装；放行记录持久化，后续更新同一插件不再被拦截。
+- **插件 / 版本操作报「npm / npx / pnpm 不是内部或外部命令」（从快捷方式 / 开机自启启动时）**：桌面程序以精简 PATH 启动时，harness 自身的 npm / npx / pnpm 解析可能失败。dsh-desktop 已自动把本机标准工具链目录合并进 harness 子进程的 PATH（`src/main/dsh/toolchain.ts`，仅环境准备、不改写任何命令），一般无需手动处理；若本机使用自定义安装路径，可用环境变量 `DSH_DESKTOP_NODE` 指定 Node 目录（见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)）。
 - **凭据保存在哪里**：仅存于运行目录 `credentials.json`（明文），`.gitignore` 已排除；卸载安装版需手动删除 `%APPDATA%\DSH Desktop\` 中的凭据文件。
 - **需要不同 DSH 版本**：版本页"检查更新 → 下载并切换"；可回退到任意已安装版本或捆绑版本（`src/main/versions.ts` 的 `switchTo`）。
 

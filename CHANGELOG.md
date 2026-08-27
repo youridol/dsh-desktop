@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.8.4] - 2026-08-27
+
+### 修复（npm / npx / pnpm 环境支持）
+
+- **harness 子进程工具链 PATH 自动补齐**：deepseek-harness 自行决定并调用 npm / npx / pnpm（`dsh plugin` 在 Profile 目录内 `spawnSync("pnpm", …, { shell: win32 })`，版本安装与捆绑 CLI 同样以 PATH 解析 npm / npx）。当桌面应用从快捷方式 / 开机自启启动时，Windows 以精简 PATH 拉起进程，harness 自身的 npm / npx / pnpm 解析会失败（`'npm'/'npx'/'pnpm' 不是内部或外部命令` / exit 127），而 dsh-desktop 自身逻辑不受影响（它显式解析 node）。现新增工具链环境支持模块（`src/main/dsh/toolchain.ts`）：
+  - 自动发现本机标准工具链目录：Node 安装目录（`where node`，回退 `Program Files\nodejs` / nvm / scoop）、`npm prefix -g` 全局 bin（缓存）、`%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`~/.pnpm/bin`、`~/.nvm`、`~/.volta/bin`；
+  - 仅把**真实存在且含 npm / npx / pnpm 命令**的目录合并进 harness 子进程的 PATH（去重、保留原有顺序、其余环境变量原样透传），无目录时零副作用（no-op）；
+  - 纯环境准备：不代理、不拦截、不转换、不重写任何包管理命令；harness 保持自身机制自由选择 npm / npx / pnpm，行为完全原生。
+- 接入点：`src/main/dsh/nodebin.ts` 的 `nodeRuntime()` 对三种 Node 解析路径（`DSH_DESKTOP_NODE` 覆盖 / 系统 node / Electron 内嵌）统一经 `withToolchain` 产出 env，因此 DSH 服务进程（`dsh web`）与所有 `execDsh` 插件 / 版本操作子进程都获得工具链 PATH；未改 deepseek-harness 上游任何代码，插件安装流程与 `dsh plugin` 转发完全不变。
+
+### 验证
+
+- 新增 `test/toolchain.test.mjs` 6 个用例（目录发现仅收录含 shim 的目录、PATH 前置合并与保留原条目、去重幂等、无发现时 no-op、env 对象不可变拷贝、npm prefix 探针路径）；`npm run typecheck`、`npm run build` 与全部 125 项测试通过。
+- 真实环境端到端验证（模拟快捷方式 / 自启的精简 PATH）：`npm --version` / `npx --yes esbuild --version` / `pnpm --version` 在精简 PATH 下全部失败（`不是内部或外部命令`），经 `withToolchain` 后全部成功（npm 11.6.2 / npx esbuild 0.28.2 / pnpm 11.22.0）；捆绑 harness 的 `dsh plugin --profile <p> ls`（转发 pnpm）在精简 PATH 下 exit 1，经 `withToolchain` 后 exit 0 —— 证明 harness 原生 pnpm 通道在桌面壳环境下可正常解析执行。
+- 全量审计确认：无任何包管理命令拦截 / 改写；`DshCommandExecutor` / `manager` / `install` 仍以数组参数直传，未引入 `ignore-scripts` 或限制性环境变量。
+- 文档同步：README / docs/ARCHITECTURE / docs/CONTRIBUTING / docs/DEPLOYMENT 统一至 v0.8.4。
 ## [v0.8.3] - 2026-08-27
 
 ### 完全放行（对 deepseek-harness 零限制）

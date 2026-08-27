@@ -8,7 +8,7 @@
 | 构建机 Node.js | ≥ 20（CI 使用 Node 22） | `README.original.md` 构建说明；`.github/workflows/build-and-release.yml` 的 `node-version: 22` | `README.original.md`、`.github/workflows/` |
 | 构建机 npm | 与 Node 配套 | 依赖锁为 `package-lock.json`（lockfileVersion 3），构建环境用 `npm ci` | `package-lock.json`、`.github/workflows/build-and-release.yml` |
 | 构建机 Git | 有 | 源码 commit 安装通道与 CI checkout 需要 Git | `.github/workflows/` |
-| 运行机 | 不要求 Node / Git / npm | 应用自带回退运行时不依赖系统 Node（`ELECTRON_RUN_AS_NODE`）；版本安装用内置 npm CLI | `src/main/dsh/nodebin.ts`、`src/main/dsh/install.ts` |
+| 运行机 | 不要求 Node / Git / npm | 应用自带回退运行时不依赖系统 Node（`ELECTRON_RUN_AS_NODE`）；版本安装用内置 npm CLI。若本机装有 npm / npx / pnpm（用于 harness 插件等），dsh-desktop 自动把其标准目录并入 harness 子进程 PATH（`toolchain.ts`），无需用户配置 | `src/main/dsh/nodebin.ts`、`src/main/dsh/install.ts`、`src/main/dsh/toolchain.ts` |
 | 硬件最低配置 | 无特殊声明 | 项目未声明最低硬件需求；服务为本地 127.0.0.1 端口，占用资源即 DSH 进程本身 | — |
 | 网络 | 构建期需访问 registry.npmjs.org 与 GitHub API | 安装依赖、fetch-dsh、electron-builder 下载工具链均需网络 | `scripts/fetch-dsh.mjs`、`.npmrc` |
 
@@ -100,7 +100,7 @@ npm run dist:zip        # electron-builder --win zip  --x64 -> release/zip/
 
 | 变量 | 默认值 | 用途 | 来源 |
 | --- | --- | --- | --- |
-| `DSH_DESKTOP_NODE` | 空（自动探测） | 指定用于运行 DSH 与 npm 安装的 Node 可执行文件路径；未设置时优先系统 `node`，其次 Electron 内嵌 Node | `src/main/dsh/nodebin.ts` |
+| `DSH_DESKTOP_NODE` | 空（自动探测） | 指定用于运行 DSH 与 npm 安装的 Node 可执行文件路径；未设置时优先系统 `node`，其次 Electron 内嵌 Node；同时作为工具链目录发现的依据（其所在目录若含 npm/npx/pnpm 会被并入 harness 子进程 PATH） | `src/main/dsh/nodebin.ts`、`src/main/dsh/toolchain.ts` |
 | `DSH_DESKTOP_SHOT` | 空（不截图） | 非空时主窗口导航至 DSH UI 4 秒后保存调试截图到该路径 | `src/main/windows/main.ts` `maybeDebugScreenshot` |
 | `DSH_DESKTOP` | 注入为 `'1'` | 应用启动 DSH 子进程时注入的内部标记（标识由桌面壳拉起的实例） | `src/main/dsh/manager.ts` |
 | `ELECTRON_RUN_AS_NODE` | 未设置 | 兜底模式：探测不到系统 node 时置 `'1'`，把 Electron 二进制当作纯 Node 解释器 | `src/main/dsh/nodebin.ts` |

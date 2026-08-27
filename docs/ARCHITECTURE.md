@@ -67,6 +67,8 @@ flowchart TB
 > 说明：图中每个模块（`index.ts` / `ipc.ts` / `windows/` / `tray.ts` / `autostart.ts` / `config.ts` / `paths.ts` / `logger.ts` / `dsh/manager.ts` / `dsh/install.ts` / `dsh/releases.ts` / `services/dsh/` / `versions.ts` / `src/preload/` / `src/renderer/` 各页面）均可在下方目录结构（第 5 节）中定位。
 
 > **完全放行原则**：dsh-desktop 对 deepseek-harness 不设任何拦截 / 限制 / 沙箱 / 二次阻断——命令层以数组参数完整透传环境（无 `ignore-scripts`、无限制性环境变量），主窗口不拦截 DSH Web UI 的弹窗 / 新窗口（`window.open` 原生行为优先）；仅使用 harness 官方 CLI 选项（`--no-open`，壳层内嵌 UI 的标准集成）与僵死进程看门狗超时。dsh-desktop 唯一的「写入」是解除 pnpm 默认构建脚本拦截的 Profile 策略授权（`allowBuilds`），目的与效果都是放行，而非限制。
+>
+> **环境支持（npm / npx / pnpm）**：harness 自行决定并调用 npm / npx / pnpm（`dsh plugin` 在 Profile 目录内 `spawnSync("pnpm", …, { shell: win32 })`）。dsh-desktop 在每个 harness 子进程启动时经 `toolchain.ts` 把本机标准工具链目录（Node 安装目录、`npm prefix -g` 全局 bin、`%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`~/.pnpm/bin`、nvm / volta 等）合并进 PATH——纯环境准备，不代理 / 拦截 / 转换 / 重写任何包管理命令，harness 的包管理行为保持原生。
 
 ## 2. 模块职责矩阵
 
@@ -79,7 +81,8 @@ flowchart TB
 | IPC 注册 | 全部 `ipcMain.handle/on` 通道；日志与状态订阅推送 | `src/main/ipc.ts` |
 | DSH 生命周期 | spawn `dsh web --no-open --port`；端口轮询（10s 超时，300ms 间隔）；`taskkill /T` 结束进程树；状态机（stopped/starting/running/stopping/crashed/timeout/error） | `src/main/dsh/manager.ts` |
 | 版本安装 | npm 版本安装（内置 npm CLI）；源码 commit 安装（codeload 下载 → pnpm install/build → 布局 junction）；捆绑运行时首次解包（`System32\tar.exe`）；junction 安全删除 | `src/main/dsh/install.ts` |
-| Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals` | `src/main/dsh/nodebin.ts` |
+| Node 运行时解析 | 系统 node / `DSH_DESKTOP_NODE` 覆盖 / Electron 内嵌 Node 回退；`--expose-internals`；所有 harness 子进程 env 经工具链 PATH 合并 | `src/main/dsh/nodebin.ts` |
+| 工具链环境支持 | npm / npx / pnpm 标准目录发现（Node 安装目录 / `npm prefix -g` 全局 bin / `%APPDATA%\npm` / `%LOCALAPPDATA%\pnpm` / `~/.pnpm/bin` / nvm / volta）+ PATH 去重合并；纯环境准备，不拦截 / 改写命令 | `src/main/dsh/toolchain.ts` |
 | Releases 客户端 | GitHub API 查询（凭据鉴权）；tag→npm 版本映射；403 限流与网络错误分类 | `src/main/dsh/releases.ts` |
 | 插件管理 | dsh harness profile 的桌面端管理：`dsh plugin --profile <profile>` CLI 调用（安装 / 卸载，安装来源 npm / npx / dsh 由 `DshPluginInstaller.ts` 策略层分发，插件名支持 npm 包或 GitHub/git 地址）+ profile manifest 读写（列表 / 启用 / 禁用，元数据 `dsh.desktop.plugins` 记录来源 + Profile + 安装时间）+ 导出；pnpm 构建脚本拦截时经 `pnpmBuildPolicy.ts` 解析精确 spec 并授权（`allowBuilds` + `onlyBuiltDependencies`）后自动重装 | `src/main/services/dsh/DshPluginService.ts` + `DshPluginInstaller.ts` + `pnpmBuildPolicy.ts` + `profilePaths.ts` |
 | Skills 管理 | 统一路径解析（`harnessPaths.ts`：`~`/`~/`/`~` 展开 + `$DSH_AGENTS_HOME` + `os.homedir()`，禁止把 `~` 当相对路径；global 作用域 = `<agentsHome>/skills`，deepseek-harness 真实读取的全局根）+ 仓库注册表 / git 克隆拉取（`GitRunner`）+ SKILL.md 目录发现（仓库递归 + agents 单层目录束/扁平 md）；global/project 清单 = index.json + 磁盘 Agent 扫描合并（已有 Skills 直接可见，Agent 管理模块同时区分展示全局/项目 Agent）；安装到 global 按 harness 规范（kebab 目录名 + SKILL.md 前导 name/description），启停写 `disable-model-invocation` / `user-invocable` 前导策略对上游真实生效；启停/卸载/删除/批量；来源 commit 对比更新；GitHub 搜索与一键安装；JSON 导出导入 + 本地备份 | `src/main/services/skills/*.ts` + `src/renderer/control/tabs/skills.ts` |
@@ -249,7 +252,7 @@ dsh-desktop/
 ├── scripts/                    # 构建 / 打包 / 获取运行时 / 图标 / E2E 驱动 / afterPack 钩子
 ├── src/
 │   ├── main/                   # Electron 主进程（详见第 2 节矩阵）
-│   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）
+│   │   ├── dsh/                # DSH 生命周期（manager）、安装（install）、Node 解析（nodebin）、上游客户端（releases）、工具链环境支持（toolchain）
 │   │   ├── services/dsh/       # dsh 插件管理（DshPluginService / DshPluginInstaller / pnpmBuildPolicy / profilePaths）
 │   │   ├── services/skills/      # Skills 管理（validation / discovery / harnessPaths / gitRunner / repositoryManager / lifecycle / backup / skillsService）
 │   │   └── windows/            # 主窗口 / 悬浮球 / 控制面板 + supervisor 窗口守护

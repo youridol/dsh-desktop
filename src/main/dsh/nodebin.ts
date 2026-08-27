@@ -7,8 +7,15 @@
  *     plain-node ABI, so the system runtime is the safest match when present.
  *  3. This app's own Electron binary in ELECTRON_RUN_AS_NODE mode, so machines
  *     without Node can still run everything.
+ *
+ * Every invocation inherits the package-manager toolchain PATH (see
+ * ./toolchain): deepseek-harness resolves npm / npx / pnpm itself as plain
+ * PATH commands, so the child environment must always carry the standard
+ * toolchain dirs even when the app was launched from a shortcut with a
+ * trimmed PATH.
  */
 import { spawnSync } from 'node:child_process'
+import { withToolchain } from './toolchain'
 
 export interface NodeInvocation {
   command: string
@@ -34,7 +41,7 @@ export function nodeRuntime(): NodeInvocation {
   const commonArgs = ['--expose-internals']
   const override = process.env.DSH_DESKTOP_NODE
   if (override) {
-    cached = { command: override, argsPrefix: [...commonArgs], env: { ...process.env }, label: override }
+    cached = { command: override, argsPrefix: [...commonArgs], env: withToolchain({ ...process.env }), label: override }
     return cached
   }
   const sys = systemNode()
@@ -42,7 +49,7 @@ export function nodeRuntime(): NodeInvocation {
     cached = {
       command: sys,
       argsPrefix: [...commonArgs],
-      env: { ...process.env },
+      env: withToolchain({ ...process.env }),
       label: `system node (${sys})`,
     }
     return cached
@@ -51,7 +58,7 @@ export function nodeRuntime(): NodeInvocation {
   cached = {
     command: process.execPath,
     argsPrefix: [...commonArgs],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: withToolchain({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
     label: `embedded node (${process.execPath})`,
   }
   return cached
