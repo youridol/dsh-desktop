@@ -32,9 +32,10 @@ dsh-desktop 对 deepseek-harness 采取**完全放行、行为优先**原则：
   - 插件名可填 GitHub / git 地址（`github:owner/repo`、`https://github.com/...` 等）；pnpm 拦截构建脚本时可一键「放行构建脚本并重试」（真实写入 Profile 的 `pnpm-workspace.yaml` `allowBuilds` 并自动重装，详见下文「插件安装来源」）；
   - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
   - 来源识别：插件列表用标签展示「来源：npm / npx / dsh」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
-- **插件市场（dsh-market）**（`src/main/services/dsh/DshMarketService.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 仅作为官方插件市场 dsh-market 的快捷配置入口，不重复实现市场逻辑——
+- **插件市场（dsh-market）**（`src/main/services/dsh/DshMarketService.ts` + `src/main/windows/market.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 仅作为官方插件市场 dsh-market 的快捷配置入口，不重复实现市场逻辑——
   - 本地未安装 dshmarket 时自动安装（复用既有 npm 安装通道：`dsh plugin --profile web add dshmarket`，安装来源记为 npm）；
-  - 「打开插件市场」一键聚焦主窗口并打开 DSH Web 界面的 设置 → 插件市场（市场 UI 由 DSH Web UI 原生承载，dsh-desktop 只做等效用户点击的定位，不改动 deepseek-harness / dsh-market 任何代码）；
+  - 「打开市场原生界面」打开独立窗口，以与主窗口完全相同的路径加载 DSH Web UI 并自动定位到 设置 → 插件市场——直接承载 dsh-market 官方原生 React 组件（浏览 / 搜索 / 一键安装 / 更新 / 卸载），行为与主窗口完全一致（`src/main/windows/market.ts`）；
+  - 「在主窗口打开」聚焦主窗口并打开 DSH Web 界面的 设置 → 插件市场（等效用户点击的定位，不改动 deepseek-harness / dsh-market 任何代码）；
   - 市场状态展示：已安装版本 / 已启用 / 已挂载（探测 /dsh-market/status）；
   - 三通道安装（npm / npx / dsh）与已安装列表保留，作为市场不可用（离线等）时的本地管理兜底；
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。
@@ -120,7 +121,7 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 | 页签 | 功能 | 操作要点 |
 | --- | --- | --- |
 | 仪表盘 | 统一监控：DSH 服务 / 插件概要 / 版本概要 / 异常汇总 | 各监控卡片独立刷新（DSH 服务卡含启停操作）；卡片内的「管理插件 / 版本管理 / 查看日志」可直接跳转对应页签；异常卡支持清空日志 |
-| 插件 | 插件市场 / 安装 / 启停 / 卸载 / 导出 / 应用 | 顶部「插件市场」卡片：本地未装自动安装，点击「打开插件市场」在 DSH Web 界面打开 设置 → 插件市场（浏览 / 搜索 / 一键安装社区插件）；下方保留 npm / npx / dsh 三通道安装与已安装列表作为本地管理兜底；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」与「插件市场」） |
+| 插件 | 插件市场 / 安装 / 启停 / 卸载 / 导出 / 应用 | 顶部「插件市场」卡片：本地未装自动安装；「打开市场原生界面」在独立窗口直接承载 dsh-market 原生 Web UI（设置 → 插件市场，浏览 / 搜索 / 一键安装社区插件）；「在主窗口打开」聚焦主窗口定位到市场；下方保留 npm / npx / dsh 三通道安装与已安装列表作为本地管理兜底；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」与「插件市场」） |
 | Skills | 仓库管理 / 安装 / 启停 / 批量 / 更新 / 搜索 / 备份迁移 | 先添加仓库并同步（默认示例 mattpocock/skills）；展开仓库查看可安装技能，安装到全局或项目作用域；"检测更新"对比来源 commit；"创建备份"写入运行目录备份 |
 | 版本 | 检查 / 下载 / 切换 / 回退 / 删除 | 来源可选"最新发布版本"或"最新提交（源码）"；本机版本列表离线可读；不能删除当前使用中的版本 |
 | 日志 | 进程状态 / 实时日志 | 状态卡显示 DSH 状态、端口、PID、运行版本；日志滚动显示应用 / DSH / 安装三类来源 |
