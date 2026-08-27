@@ -117,7 +117,7 @@ jobs:
           pnpm --version
 
       - name: Install dependencies (pnpm install --frozen-lockfile)
-        run: pnpm install --frozen-lockfile --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
 
       - name: Validate release logic
         # 发版决策模块（scripts/release-plan.mjs）单测：版本递进识别 / tag 生成 / 幂等判定
