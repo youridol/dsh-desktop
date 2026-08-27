@@ -1,21 +1,35 @@
 /**
- * pnpm build-script policy for dsh profiles.
+ * pnpm supply-chain policy for dsh profiles.
  *
- * pnpm (>= 10) blocks dependency build scripts by default. Git-hosted
- * plugins (e.g. GitHub installs) are the sharpest case: their `prepare`
- * script is refused with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` until the
- * exact package spec is added under `allowBuilds` in the profile's
- * `pnpm-workspace.yaml`; registry packages with lifecycle scripts are listed
- * via `Ignored build scripts: ...`. dsh-desktop never edits deepseek-harness
- * itself — it only grants pnpm permission inside the profile the harness
- * already manages, then re-runs the install.
+ * pnpm (>= 10) enforces two profile-scoped gates that fail `dsh plugin add`
+ * until the profile's own policy file (pnpm-workspace.yaml) authorizes the
+ * exact packages involved:
+ *
+ *  1. build-script gate — dependency build scripts are blocked by default.
+ *     Git-hosted plugins (e.g. GitHub installs) are the sharpest case:
+ *     their `prepare` script is refused with
+ *     `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` until the exact package spec is
+ *     added under `allowBuilds`; registry packages with lifecycle scripts are
+ *     listed via `Ignored build scripts: ...`.
+ *  2. release-age gate — pnpm >= 11 (via corepack; npm's bundled default is
+ *     `minimumReleaseAge: 1440` = 24 h) rejects lockfile entries published
+ *     inside the cutoff with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` /
+ *     `NO_MATURE_MATCHING_VERSION` until the exact `name@version` is added
+ *     under `minimumReleaseAgeExclude`. This breaks ANY install while a
+ *     recently-published dependency (e.g. `dshmarket@1.31.2`,
+ *     `@linxin666/dsh-chat-recovery@0.3.5`) sits in the profile lockfile.
+ *
+ * dsh-desktop never edits deepseek-harness itself — it only grants pnpm
+ * permission inside the profile the harness already manages, then re-runs
+ * the install.
  *
  * This module owns:
- *  - detecting a blocked-build failure from CLI output and extracting the
- *    package spec(s) pnpm wants allowlisted;
- *  - authorizing those specs (`allowBuilds` in pnpm-workspace.yaml) plus the
- *    plain package names (`pnpm.onlyBuiltDependencies` in package.json, the
- *    pnpm 9 / pnpm 10 <= 10.25 fallback) so the same install/build passes.
+ *  - detecting either blocked failure from CLI output and extracting the
+ *    package spec(s) pnpm wants allowlisted (build keys / release-age refs);
+ *  - authorizing those specs in the profile policy: `allowBuilds` (and the
+ *    pnpm 9 / pnpm 10 <= 10.25 `pnpm.onlyBuiltDependencies` fallback) for
+ *    build scripts, plus `minimumReleaseAgeExclude` for the release-age gate
+ *    — so the same install/build passes.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,6 +44,16 @@ export interface BlockedBuildInfo {
   keys: string[]
   /** Plain package names (scope included) for `pnpm.onlyBuiltDependencies`. */
   names: string[]
+}
+
+/**
+ * Packages the pnpm minimumReleaseAge gate wants excluded. Each ref is a
+ * `name@version` (or `name@range`) spec written verbatim under
+ * `minimumReleaseAgeExclude` in pnpm-workspace.yaml.
+ */
+export interface ReleaseAgeInfo {
+  /** Exact `name@version` refs pnpm rejected as too young. */
+  refs: string[]
 }
 
 export interface BuildAuthorizeResult {
@@ -175,6 +199,59 @@ export function parseBlockedBuildInfo(output: string): BlockedBuildInfo {
   return { keys, names }
 }
 
+// ---- release-age gate ----
+
+/** Signal phrases that identify a minimumReleaseAge failure. */
+const RELEASE_AGE_SIGNALS = [
+  'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION',
+  'MINIMUM_RELEASE_AGE_VIOLATION',
+  'NO_MATURE_MATCHING_VERSION',
+  'minimumReleaseAge cutoff',
+  'does not meet the minimumReleaseAge',
+  'minimumReleaseAge constraint',
+] as const
+
+/** True when the output contains a minimumReleaseAge-blocked signal. */
+export function hasReleaseAgeSignal(output: string): boolean {
+  const lower = output.toLowerCase()
+  return RELEASE_AGE_SIGNALS.some((signal) => lower.includes(signal.toLowerCase()))
+}
+
+/**
+ * Extract the `name@version` refs pnpm rejected as too young. Sources:
+ *  - lockfile verification: `  name@1.2.3 was published at ...`, within the
+ *    minimumReleaseAge cutoff (`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`);
+ *  - resolution strict mode: `name@1.2.3 was published at ...` on its own
+ *    line (`NO_MATURE_MATCHING_VERSION`);
+ *  - the `failOnImmature` list: `  name@1.2.3 ...not meet the
+ *    minimumReleaseAge constraint`.
+ */
+export function parseReleaseAgeInfo(output: string): ReleaseAgeInfo {
+  const refs: string[] = []
+  if (!hasReleaseAgeSignal(output)) return { refs }
+  const outputLines = output.split(/\r?\n/)
+  for (const line of outputLines) {
+    // Entry lines are indented: `  name@1.2.3 was published at ...`.
+    if (!/^\s+[@a-zA-Z0-9]/.test(line)) continue
+    const trimmed = line.trim()
+    const m = /^([@a-zA-Z0-9][^\s@]*@[^\s]+?)\s/.exec(trimmed)
+    if (!m) continue
+    const ref = m[1]
+    // A ref that carries the error code is not a package entry.
+    if (/ERR_|VIOLATION|cutoff/i.test(ref)) continue
+    if (!refs.includes(ref)) refs.push(ref)
+  }
+  // Fallback: `The git-hosted package "name@1.0.0"` (git installs) — keep the name.
+  if (refs.length === 0) {
+    const gitPkg = /the git-hosted package "([^"]+)"/i.exec(output)
+    if (gitPkg) {
+      const name = packageNameFromRef(gitPkg[1])
+      if (name) refs.push(name)
+    }
+  }
+  return { refs }
+}
+
 // ---- authorization ----
 
 interface WorkspaceDoc {
@@ -298,4 +375,44 @@ export function authorizeBuildScripts(profile: string, info: BlockedBuildInfo): 
   }
 
   return { workspacePath, manifestPath: resolveProfileManifestPath(profile), keys: keysAdded, names: namesAdded }
+}
+
+/**
+ * Authorize pnpm's minimumReleaseAge gate to skip the given package refs
+ * inside a profile by merging them into `minimumReleaseAgeExclude` in the
+ * profile's pnpm-workspace.yaml (the policy file pnpm 11 reads — the same
+ * file dsh itself points at when it prints the gate error).
+ *
+ * Idempotent: existing refs are kept, exact duplicates are not repeated.
+ * Returns the refs actually added (empty when all were already excluded).
+ */
+export function authorizeReleaseAgeExcludes(
+  profile: string,
+  info: ReleaseAgeInfo,
+): { workspacePath: string; added: string[] } {
+  const dir = resolveProfileDir(profile)
+  const refs = Array.from(new Set(info.refs.filter((r) => r.trim().length > 0)))
+  if (refs.length === 0) {
+    return { workspacePath: path.join(dir, WORKSPACE_FILE), added: [] }
+  }
+  const { doc } = readWorkspace(dir)
+  const existing = Array.isArray(doc.minimumReleaseAgeExclude)
+    ? [...(doc.minimumReleaseAgeExclude as string[])]
+    : []
+  const added: string[] = []
+  for (const ref of refs) {
+    if (!existing.includes(ref)) {
+      existing.push(ref)
+      added.push(ref)
+    }
+  }
+  if (added.length === 0) {
+    return { workspacePath: path.join(dir, WORKSPACE_FILE), added: [] }
+  }
+  doc.minimumReleaseAgeExclude = existing
+  const workspacePath = writeWorkspace(dir, doc)
+  appLog.info(
+    `pnpm release-age policy: excluded ${added.length} ref(s) in ${WORKSPACE_FILE} (profile ${profile})`,
+  )
+  return { workspacePath, added }
 }

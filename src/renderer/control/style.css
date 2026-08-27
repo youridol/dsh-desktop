@@ -709,6 +709,24 @@ a:hover { text-decoration: underline; }
 .dash-mini-list .row { flex-wrap: nowrap; }
 
 /* =====================================================================
+   Market embed（内嵌 dsh-market 原生 Web UI）
+   ===================================================================== */
+.market-frame-wrap {
+  margin-top: var(--dsh-space-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-card);
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base);
+}
+.market-frame {
+  display: block;
+  width: 100%;
+  height: 480px;
+  border: 0;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* =====================================================================
    Skills page layout
    ===================================================================== */
 .skills-cols {

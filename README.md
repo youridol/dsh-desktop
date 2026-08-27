@@ -27,17 +27,17 @@ dsh-desktop 对 deepseek-harness 采取**完全放行、行为优先**原则：
   - Agent 管理：全局 / 项目 Agent 目录中的本机技能（目录束 / 扁平 Markdown）自动读取、区分展示，支持刷新、启停与删除，不修改 deepseek-harness 上游源码；
   - 检测上游更新并执行更新同步；GitHub Skills 搜索与一键安装；
   - 导出 / 导入 / 备份 / 恢复，导入时校验格式、版本、路径与冲突（`test/skills-service.test.mjs` 覆盖核心逻辑）。
-- **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh）与 Profile 作为元数据写入 manifest 并展示在列表中：
-  - 安装方式可选 npm / npx / dsh：npm 与 npx 默认安装到 `web` profile，dsh 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），不自行 git clone / npm install / 下载 tarball；
-  - 插件名可填 GitHub / git 地址（`github:owner/repo`、`https://github.com/...` 等）；pnpm 拦截构建脚本时可一键「放行构建脚本并重试」（真实写入 Profile 的 `pnpm-workspace.yaml` `allowBuilds` 并自动重装，详见下文「插件安装来源」）；
+- **插件管理**（`src/main/services/dsh/DshPluginService.ts` + `src/main/services/dsh/DshPluginInstaller.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 是 dsh harness 上游插件机制的桌面端管理工具——所有插件操作经 `dsh plugin --profile \u003cprofile\u003e \u003cadd|remove|…\u003e` CLI 调用（npm/pnpm 包解析与依赖安装交给 dsh harness），插件列表实时读取 profile manifest（`$DSH_HOME/profiles/web/package.json`），安装来源（npm / npx / dsh / pnpm / GitHub / 自定义命令）与 Profile 作为元数据写入 manifest 并展示在列表中：
+  - 安装方式可选 npm / npx / dsh / pnpm / GitHub / 自定义命令：npm / npx / GitHub 默认安装到 `web` profile，dsh / pnpm 可指定任意 Profile（对应 `dsh plugin --profile \u003cprofile\u003e add \u003c包名\u003e`），自定义命令输入完整命令行（`npx dsh plugin --profile web add \u003c包名\u003e` / `pnpm add \u003c包名\u003e` 等，主进程分词执行，不做 shell 解释）；
+  - 插件名可填 GitHub / git 地址（`github:owner/repo`、`https://github.com/...` 等）；pnpm 拦截构建脚本时可一键「放行构建脚本并重试」（真实写入 Profile 的 `pnpm-workspace.yaml` `allowBuilds` 并自动重装）；pnpm 的 minimumReleaseAge 供应链策略拦截近期发布的包时可一键「放行并重试」（写入 `minimumReleaseAgeExclude` 并自动重装，修复 git 类插件安装失败，详见下文「插件安装来源」）；
   - 启用 / 禁用（编辑 `dsh.profile.bundles`）/ 卸载 / 导出（复制包名+版本到剪贴板）/ 刷新；
-  - 来源识别：插件列表用标签展示「来源：npm / npx / dsh」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
-- **插件市场（dsh-market）**（`src/main/services/dsh/DshMarketService.ts` + `src/main/windows/market.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 仅作为官方插件市场 dsh-market 的快捷配置入口，不重复实现市场逻辑——
+  - 来源识别：插件列表用标签展示「来源：npm / npx / dsh / pnpm / GitHub / 自定义命令」与「Profile：\u003c名称\u003e」，安装与卸载按记录来源与 Profile 路由（详细说明见下文「插件安装来源」）；
+- **插件市场（dsh-market）**（`src/main/services/dsh/DshMarketService.ts` + `src/renderer/control/tabs/plugins.ts`）：dsh-desktop 仅作为官方插件市场 dsh-market 的快捷配置入口，不重复实现市场逻辑——
   - 本地未安装 dshmarket 时自动安装（复用既有 npm 安装通道：`dsh plugin --profile web add dshmarket`，安装来源记为 npm）；
-  - 「打开市场原生界面」打开独立窗口，以与主窗口完全相同的路径加载 DSH Web UI 并自动定位到 设置 → 插件市场——直接承载 dsh-market 官方原生 React 组件（浏览 / 搜索 / 一键安装 / 更新 / 卸载），行为与主窗口完全一致（`src/main/windows/market.ts`）；
+  - **原生 Web UI 直接内嵌**在插件页签卡片容器中：iframe 承载 DSH Web UI，加载后主进程自动导航到 设置 → 插件市场——直接承载 dsh-market 官方原生 React 组件（浏览 / 搜索 / 一键安装 / 更新 / 卸载），操作结果实时写入 Web Profile，行为与主窗口完全一致（不再另开独立窗口）；
   - 「在主窗口打开」聚焦主窗口并打开 DSH Web 界面的 设置 → 插件市场（等效用户点击的定位，不改动 deepseek-harness / dsh-market 任何代码）；
   - 市场状态展示：已安装版本 / 已启用 / 已挂载（探测 /dsh-market/status）；
-  - 三通道安装（npm / npx / dsh）与已安装列表保留，作为市场不可用（离线等）时的本地管理兜底；
+  - 多通道安装（npm / npx / dsh / pnpm / GitHub / 自定义命令）与已安装列表保留，作为市场不可用（离线等）时的本地管理兜底；
 - **版本管理**（`src/main/versions.ts` + `src/main/dsh/releases.ts`）：检查 `deepseek-ai/deepseek-harness` 的 GitHub Releases 与默认分支最新 commit；下载新版本（经 npm registry 安装到运行目录 `versions/`）、切换、回退、删除，本机版本列表离线可判定。
 - **日志与状态**（`src/main/logger.ts` + `src/renderer/control/tabs/status.ts`）：DSH 进程状态、端口、PID、实时日志滚动（应用 / DSH / 安装三类来源，镜像到运行目录 `logs/main.log`）。
 - **设置**（`src/renderer/control/tabs/settings.ts`）：DSH 端口（修改后重启生效）、开机自启、启动时检查更新、GitHub 凭据（用于版本的 Releases 查询限流提升）。
@@ -57,19 +57,24 @@ dsh plugin --profile <profile> add <plugin>
 dsh plugin --profile web add dshmarket
 ```
 
-三种安装方式的区别（来源在安装时确定，并作为插件元数据持久化保存）：
+各安装方式的区别（来源在安装时确定，并作为插件元数据持久化保存）：
 
 | 安装方式 | 含义 | 执行通道 |
 | --- | --- | --- |
 | `npm` | 以 npm 包形式安装为 profile 依赖（默认 `web` profile） | `dsh plugin --profile web add <包名>` |
 | `npx` | 以 npx 工具包形式安装（CLI 类工具，同样为 npm 包） | `dsh plugin --profile web add <包名>` |
 | `dsh` | dsh 原生 Profile 安装，需指定 Profile | `dsh plugin --profile <profile> add <包名>` |
+| `pnpm` | pnpm 原生安装（与 dsh 同通道，来源标签区分），需指定 Profile | `dsh plugin --profile <profile> add <包名>` |
+| `GitHub` | GitHub 仓库安装，填 `github:owner/repo` / `https://github.com/owner/repo` | `dsh plugin --profile web add <git 地址>` |
+| `自定义命令` | 输入完整安装命令（`npx dsh plugin --profile web add <包名>` / `pnpm add <包名>` / `npm install <包名>` 等），主进程分词为参数数组执行，不做 shell 解释 | 原样执行（`dsh` / `npx dsh` 前缀路由到捆绑 dsh 运行时） |
 
-安装后元数据（来源 + Profile + 安装时间）写入 profile manifest 的 `dsh.desktop.plugins`；插件列表以标签展示「来源：npm / npx / dsh」与「Profile：<名称>」。卸载按记录中的 Profile 路由到对应 `dsh plugin --profile <profile> remove`，启用 / 禁用同样作用于记录中的 Profile。旧版本已安装的插件没有来源记录，默认按 `dsh` / `web` 兼容显示与操作。
+安装后元数据（来源 + Profile + 安装时间）写入 profile manifest 的 `dsh.desktop.plugins`；插件列表以标签展示「来源：npm / npx / dsh / pnpm / GitHub / 自定义命令」与「Profile：<名称>」。卸载按记录中的 Profile 路由到对应 `dsh plugin --profile <profile> remove`，启用 / 禁用同样作用于记录中的 Profile。旧版本已安装的插件没有来源记录，默认按 `dsh` / `web` 兼容显示与操作。
 
-通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh）→ 填写插件名称或 GitHub/git 地址（dsh 时还需填写 Profile，如 `web`）→ 点击安装。「dsh」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
+通过 UI 安装：控制面板 → 插件页签 → 选择安装方式（npm / npx / dsh / pnpm / GitHub / 自定义命令）→ 填写插件名称或 GitHub/git 地址（dsh / pnpm 时还需填写 Profile，如 `web`；自定义命令时填写完整命令）→ 点击安装。「dsh」不需要手填完整 CLI 命令，Profile 与插件名作为独立参数安全传递。若本机没有可用的 dsh CLI（未安装 DeepSeek Harness 或未加入 PATH），安装会返回明确错误 `未检测到可用的 dsh CLI，请先安装 DeepSeek Harness 并确保 dsh 命令已加入 PATH`，不会导致应用崩溃。
 
 **GitHub / git 插件安装**：插件名可直接填 `github:owner/repo`、`https://github.com/owner/repo`、`git+https://...` 等 pnpm 支持的 git 安装地址，由 `dsh plugin --profile <profile> add <spec>` 转发。pnpm（≥10）默认出于供应链安全拒绝依赖构建脚本（如 GitHub 插件的 `prepare`，报 `build scripts are blocked by pnpm by default` / `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），此时控制面板会弹出「放行构建脚本并重试」：确认后 dsh-desktop 将 pnpm 打印的精确包 spec 写入该 Profile 的 `pnpm-workspace.yaml` `allowBuilds`（并同步 `pnpm.onlyBuiltDependencies` 兼容 pnpm 9 / pnpm 10 ≤ 10.25），随后自动重新安装 / 构建——授权是真实策略写入并立即重试，不是仅修改 UI 状态；该放行记录会持久化，后续更新同一插件不再被拦截。dsh-desktop 只操作 Profile 策略文件，不修改 `deepseek-harness` 上游代码，也不对 Harness 安装 / 执行 / 构建 / 插件操作设置任何额外拦截、沙箱或二次阻断。
+
+**minimumReleaseAge 供应链策略**：pnpm ≥ 11（corepack 内置默认 24 小时）会在锁文件校验阶段拒绝「发布不足 24 小时」的依赖（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / `NO_MATURE_MATCHING_VERSION`）。当 Profile 中已存在近期发布的包（如 `dshmarket` / `@linxin666/dsh-chat-recovery` 的新版本）时，任何新增安装都会因此失败。此时控制面板会弹出「minimumReleaseAge 供应链策略拦截」：确认后 dsh-desktop 将 pnpm 要求的精确 `name@version` 引用写入该 Profile 的 `pnpm-workspace.yaml` `minimumReleaseAgeExclude`，随后自动重新安装——授权是真实策略写入并立即重试。此修复同时解决经 desktop 壳安装 `@linxin666/dsh-client-ui-git-graph` 等 git 类插件失败的问题。
 
 ## 技术栈
 
@@ -121,7 +126,7 @@ npm run dev        # esbuild 编译并启动应用（开发模式，运行数据
 | 页签 | 功能 | 操作要点 |
 | --- | --- | --- |
 | 仪表盘 | 统一监控：DSH 服务 / 插件概要 / 版本概要 / 异常汇总 | 各监控卡片独立刷新（DSH 服务卡含启停操作）；卡片内的「管理插件 / 版本管理 / 查看日志」可直接跳转对应页签；异常卡支持清空日志 |
-| 插件 | 插件市场 / 安装 / 启停 / 卸载 / 导出 / 应用 | 顶部「插件市场」卡片：本地未装自动安装；「打开市场原生界面」在独立窗口直接承载 dsh-market 原生 Web UI（设置 → 插件市场，浏览 / 搜索 / 一键安装社区插件）；「在主窗口打开」聚焦主窗口定位到市场；下方保留 npm / npx / dsh 三通道安装与已安装列表作为本地管理兜底；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」与「插件市场」） |
+| 插件 | 插件市场 / 安装 / 启停 / 卸载 / 导出 / 应用 | 顶部「插件市场」卡片：本地未装自动安装；dsh-market 原生 Web UI 直接内嵌卡片容器（设置 → 插件市场，浏览 / 搜索 / 一键安装社区插件，操作实时写入 Web Profile）；「在主窗口打开」聚焦主窗口定位到市场；下方保留 npm / npx / dsh / pnpm / GitHub / 自定义命令多通道安装与已安装列表作为本地管理兜底；"应用并重启 DSH"使改动生效（详见上文「插件安装来源」与「插件市场」） |
 | Skills | 仓库管理 / 安装 / 启停 / 批量 / 更新 / 搜索 / 备份迁移 | 先添加仓库并同步（默认示例 mattpocock/skills）；展开仓库查看可安装技能，安装到全局或项目作用域；"检测更新"对比来源 commit；"创建备份"写入运行目录备份 |
 | 版本 | 检查 / 下载 / 切换 / 回退 / 删除 | 来源可选"最新发布版本"或"最新提交（源码）"；本机版本列表离线可读；不能删除当前使用中的版本 |
 | 日志 | 进程状态 / 实时日志 | 状态卡显示 DSH 状态、端口、PID、运行版本；日志滚动显示应用 / DSH / 安装三类来源 |

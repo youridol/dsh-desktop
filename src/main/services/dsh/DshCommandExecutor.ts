@@ -173,3 +173,117 @@ export function execDsh(
     })
   })
 }
+
+/**
+ * Run an arbitrary command (program + argument array) through the same
+ * safe runner used by execDsh: no shell interpretation, toolchain PATH,
+ * timeout + tree-kill, structured result. Used by the custom-install
+ * channel where the user typed a full command line (`npx ...`,
+ * `pnpm ...`, `npm ...`). On win32 `.cmd` shims need the shell to be
+ * resolved via PATHEXT, so `shell: true` is used ONLY for program
+ * resolution — arguments are still passed as an array, never as a
+ * shell string, so there is no injection surface.
+ */
+export function execRaw(
+  programArgs: string[],
+  options: ExecOptions & { cwd?: string } = {},
+): Promise<ExecResult> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const [command, ...args] = programArgs
+  if (!command) {
+    return Promise.resolve({
+      ok: false,
+      exitCode: null,
+      stdout: '',
+      stderr: '命令不能为空',
+      timedOut: false,
+      error: 'empty command',
+    })
+  }
+  const node: NodeInvocation = nodeRuntime()
+  appLog.info(`execRaw: ${command} ${args.join(' ')}${options.cwd ? ` (cwd ${options.cwd})` : ''}`)
+  return new Promise<ExecResult>((resolve) => {
+    let child: ChildProcess
+    try {
+      // shell: true on win32 lets PATHEXT resolve .cmd/.ps1 shims (npx,
+      // pnpm, npm). Args stay an array — no user input is ever joined
+      // into a shell string.
+      child = spawn(command, args, {
+        env: { ...node.env },
+        cwd: options.cwd,
+        windowsHide: true,
+        shell: process.platform === 'win32',
+      })
+    } catch (err) {
+      resolve({
+        ok: false,
+        exitCode: null,
+        stdout: '',
+        stderr: `无法启动命令: ${String(err)}`,
+        timedOut: false,
+        error: `spawn failed: ${String(err)}`,
+      })
+      return
+    }
+
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    let finished = false
+    let timedOut = false
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      if (child.pid) killTree(child.pid)
+    }, timeoutMs)
+
+    child.stdout?.on('data', (c: Buffer) => stdoutChunks.push(c))
+    child.stderr?.on('data', (c: Buffer) => stderrChunks.push(c))
+
+    const done = (): void => {
+      clearTimeout(timer)
+    }
+
+    child.on('error', (err) => {
+      if (finished) return
+      finished = true
+      done()
+      resolve({
+        ok: false,
+        exitCode: null,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+        timedOut,
+        error: `process error: ${err.message}`,
+      })
+    })
+
+    child.on('close', (code) => {
+      if (finished) return
+      finished = true
+      done()
+
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim()
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim()
+
+      if (timedOut) {
+        resolve({
+          ok: false,
+          exitCode: code,
+          stdout,
+          stderr: stderr || `命令超时（${timeoutMs / 1000} 秒）`,
+          timedOut: true,
+          error: `timeout after ${timeoutMs}ms`,
+        })
+        return
+      }
+
+      resolve({
+        ok: code === 0,
+        exitCode: code,
+        stdout,
+        stderr,
+        timedOut: false,
+      })
+    })
+  })
+}

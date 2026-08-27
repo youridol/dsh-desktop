@@ -41,6 +41,8 @@ const OPEN_READY_TIMEOUT_MS = 30_000
 export interface DshMarketStatus {
   /** DSH 服务是否在运行。 */
   dshRunning: boolean
+  /** DSH 服务地址（http://127.0.0.1:<port>），用于内嵌市场 iframe。 */
+  serviceUrl: string
   /** dshmarket 是否已安装到 web profile（dependencies 存在）。 */
   installed: boolean
   /** dshmarket 是否已在 dsh.profile.bundles 中启用。 */
@@ -140,6 +142,7 @@ export async function marketStatus(): Promise<DshMarketStatus> {
 
   return {
     dshRunning: status.state === 'running',
+    serviceUrl: status.serviceUrl,
     installed,
     enabled,
     version,
@@ -236,13 +239,43 @@ export async function openMarket(): Promise<DshMarketStatus> {
 }
 
 /**
- * 在 DSH Web UI 内打开设置对话框并定位「插件市场」区。
+ * 在 DSH Web UI 内打开设置对话框并定位「插件市场」区（可在任意承载 DSH
+ * Web UI 的页面/iframe 中执行，包括市场窗口与内嵌容器）。
  *
  * 选择器依据 DSH Web UI 官方产物（dsh-client-ui-settings-general）：
  * 设置触发器按钮带 `aria-haspopup="dialog"`；设置面板是 `role="dialog"`；
  * 导航项是含 label 的按钮（市场区 id `market`，label 随 UI 语言为
  * 「插件市场」/「Plugin Market」）。与用户点击等价，失败即静默回退。
+ *
+ * 该脚本通过 IPC 提供给内嵌市场 iframe（与主窗口宿主共用同一套选择器）。
  */
+export function openMarketSectionScript(): string {
+  return OPEN_MARKET_SECTION_SCRIPT
+}
+
+export const OPEN_MARKET_SECTION_SCRIPT = `
+(() => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  return (async () => {
+    try {
+      const trigger = document.querySelector('button[aria-haspopup="dialog"]');
+      if (trigger) trigger.click();
+    } catch {}
+    for (let i = 0; i < 30; i++) {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (dialog) {
+        const cells = [...dialog.querySelectorAll('button')];
+        const target = cells.find((b) => /插件市场|Plugin Market|Market/.test(b.textContent || ''));
+        if (target) { target.click(); return true; }
+      }
+      await sleep(200);
+    }
+    return false;
+  })();
+})()
+`
+
+/** 在 DSH Web UI 内打开设置对话框并定位「插件市场」区（主窗口宿主）。 */
 async function openMarketSectionViaHost(): Promise<void> {
   const triggerScript = `
     (() => {

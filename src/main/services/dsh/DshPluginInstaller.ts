@@ -10,13 +10,20 @@
  * recorded as plugin metadata so the UI and later management operations can
  * tell the three apart.
  */
-import { execDsh, type ExecResult } from './DshCommandExecutor'
-import { hasBlockedBuildSignal, parseBlockedBuildInfo, type BlockedBuildInfo } from './pnpmBuildPolicy'
+import { execDsh, execRaw, type ExecResult } from './DshCommandExecutor'
+import {
+  hasBlockedBuildSignal,
+  parseBlockedBuildInfo,
+  hasReleaseAgeSignal,
+  parseReleaseAgeInfo,
+  type BlockedBuildInfo,
+  type ReleaseAgeInfo,
+} from './pnpmBuildPolicy'
 import { appLog } from '../../logger'
 
 // ---- types ----
 
-export type PluginInstallSource = 'npm' | 'npx' | 'dsh-profile'
+export type PluginInstallSource = 'npm' | 'npx' | 'dsh-profile' | 'pnpm' | 'github' | 'custom'
 
 export interface InstallPluginOptions {
   /** npm package name (registry spec, e.g. `dshmarket` or `@scope/pkg`). */
@@ -25,6 +32,8 @@ export interface InstallPluginOptions {
   source: PluginInstallSource
   /** Target profile name. Required for `dsh-profile`; defaults for others. */
   profile?: string
+  /** Custom install command for `custom` source (e.g. `npx dsh plugin --profile web add x`). */
+  command?: string
 }
 
 export interface PluginInstallError {
@@ -40,6 +49,12 @@ export interface BuildBlockedInstallError extends PluginInstallError {
   names: string[]
 }
 
+/** minimumReleaseAge failure carrying the refs pnpm wants excluded. */
+export interface ReleaseAgeBlockedInstallError extends PluginInstallError {
+  code: 'RELEASE_AGE_BLOCKED'
+  refs: string[]
+}
+
 /** Validation error for bad install requests. */
 export function validationError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'INVALID_REQUEST', message, cause }
@@ -48,6 +63,23 @@ export function validationError(message: string, cause?: unknown): PluginInstall
 /** Failure while executing the install command. */
 export function execError(message: string, cause?: unknown): PluginInstallError {
   return { code: 'EXEC_FAILED', message, cause }
+}
+
+/** Narrow the catch type to a structured release-age-blocked error. */
+export function isReleaseAgeBlockedError(err: unknown): err is ReleaseAgeBlockedInstallError {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    (err as PluginInstallError).code === 'RELEASE_AGE_BLOCKED'
+  )
+}
+
+/** Build a user-facing RELEASE_AGE_BLOCKED error from parsed pnpm output. */
+export function releaseAgeBlockedError(info: ReleaseAgeInfo, cause?: unknown): ReleaseAgeBlockedInstallError {
+  const detail = info.refs.join(', ')
+  const message = `pnpm 的 minimumReleaseAge 供应链策略拦截了近期发布的包` +
+    (detail ? `：${detail}` : '') + `。将其加入 minimumReleaseAgeExclude 后可重新安装`
+  return { code: 'RELEASE_AGE_BLOCKED', message, refs: info.refs, cause }
 }
 
 /** Narrow the catch type to a structured build-blocked error. */
@@ -152,6 +184,78 @@ function DshProfilePluginInstaller(exec: Executor): PluginInstaller {
   }
 }
 
+// ---- pnpm installer ----
+
+/**
+ * pnpm-native installs: the same `dsh plugin --profile <profile> add <pkg>`
+ * channel the dsh CLI forwards to pnpm inside the profile, recorded with the
+ * source label `pnpm` so the UI can distinguish it. The profile is validated
+ * before this installer runs.
+ */
+function PnpmPluginInstaller(exec: Executor): PluginInstaller {
+  return {
+    source: 'pnpm',
+    async install(opts) {
+      const command = ['plugin', '--profile', opts.profile!, 'add', opts.name]
+      logInstall(opts, command.join(' '))
+      return exec(command, { timeoutMs: 300_000 })
+    },
+  }
+}
+
+// ---- github installer ----
+
+/**
+ * GitHub-hosted plugins: install the `github:owner/repo` spec into the
+ * profile via the native dsh channel (pnpm resolves GitHub specs itself).
+ * The spec is passed through the same validation as git/GitHub URLs.
+ */
+function GithubPluginInstaller(exec: Executor): PluginInstaller {
+  return {
+    source: 'github',
+    async install(opts) {
+      const command = ['plugin', '--profile', opts.profile ?? DEFAULT_PROFILE, 'add', opts.name]
+      logInstall(opts, command.join(' '))
+      return exec(command, { timeoutMs: 300_000 })
+    },
+  }
+}
+
+// ---- custom installer ----
+
+/**
+ * Custom install command: the user typed a full command line (e.g.
+ * `npx dsh plugin --profile web add x`, `pnpm add x`, `npm install x`).
+ * The line is split on whitespace into an argument array — never a shell
+ * string — so command injection is impossible; the array is handed to the
+ * shared raw executor (win32 .cmd resolution via PATHEXT, no shell
+ * interpretation of the arguments). A leading `dsh`/`npx dsh` prefix is
+ * normalized to the bundled dsh runtime so the CLI is always available
+ * regardless of PATH.
+ */
+function CustomPluginInstaller(exec: Executor): PluginInstaller {
+  return {
+    source: 'custom',
+    async install(opts) {
+      const raw = (opts.command ?? opts.name).trim()
+      const parts = raw.split(/\s+/).filter(Boolean)
+      if (parts.length === 0) throw validationError('自定义安装命令不能为空')
+      appLog.info(`[PluginInstall] custom command=${raw}`)
+      // `dsh <args>` / `npx dsh <args>` → bundled dsh executor (PATH-free).
+      const first = parts[0] === 'npx' ? parts[1] : parts[0]
+      if (first === 'dsh') {
+        const dshArgs = parts[0] === 'npx' ? parts.slice(2) : parts.slice(1)
+        if (dshArgs.length === 0) throw validationError('自定义安装命令缺少 dsh 参数')
+        return exec(dshArgs, { timeoutMs: 300_000 })
+      }
+      // Everything else runs as a raw program in the profile directory
+      // (pnpm add / npm install / npx <pkg> ...).
+      const profile = opts.profile ?? DEFAULT_PROFILE
+      const { resolveProfileDir } = await import('./profilePaths')
+      return execRaw(parts, { timeoutMs: 300_000, cwd: resolveProfileDir(profile) })
+    },
+  }
+}
 // ---- dispatcher ----
 
 /**
@@ -166,6 +270,12 @@ function installerFor(source: string, exec: Executor): PluginInstaller {
       return NpxPluginInstaller(exec)
     case 'dsh-profile':
       return DshProfilePluginInstaller(exec)
+    case 'pnpm':
+      return PnpmPluginInstaller(exec)
+    case 'github':
+      return GithubPluginInstaller(exec)
+    case 'custom':
+      return CustomPluginInstaller(exec)
     default:
       throw validationError(`未知安装来源：${source}`)
   }
@@ -174,10 +284,12 @@ function installerFor(source: string, exec: Executor): PluginInstaller {
 /**
  * Install a plugin by its declared source.
  *
- * - validates the plugin name up front, and the profile for `dsh-profile`
+ * - validates the plugin name up front, and the profile for `dsh-profile` /
+ *   `pnpm`
  * - runs the source's installer (argument arrays — no shell strings)
  * - maps exec results into structured errors: build scripts blocked by pnpm /
- *   dsh CLI missing / timeout / spawn failure / non-zero exit
+ *   minimumReleaseAge blocked / dsh CLI missing / timeout / spawn failure /
+ *   non-zero exit
  *
  * Returns the exec result; the caller persists metadata on success.
  */
@@ -189,10 +301,14 @@ export async function runInstall(
   // Source first: an unknown channel must fail before anything else.
   const installer = installerFor(opts.source, exec)
 
-  const nameError = validateName(opts.name)
-  if (nameError) throw validationError(nameError)
+  // Custom installs carry a free-form command; the name field is only a
+  // human label, so strict package-name validation is skipped there.
+  if (opts.source !== 'custom') {
+    const nameError = validateName(opts.name)
+    if (nameError) throw validationError(nameError)
+  }
 
-  if (opts.source === 'dsh-profile') {
+  if (opts.source === 'dsh-profile' || opts.source === 'pnpm') {
     const profileError = validateProfile(opts.profile)
     if (profileError) throw validationError(profileError)
   }
@@ -208,6 +324,15 @@ export async function runInstall(
   const blocked = parseBlockedBuildInfo(output)
   if (blocked.keys.length > 0 || blocked.names.length > 0 || hasBlockedBuildSignal(output)) {
     throw buildBlockedError(blocked, result)
+  }
+
+  // pnpm 11's supply-chain gate refused lockfile entries published within the
+  // minimumReleaseAge cutoff (e.g. a recently-updated dependency already in
+  // the profile). Surface it as a structured RELEASE_AGE_BLOCKED error so
+  // DshPluginService / the UI can authorize the exact refs and retry.
+  const releaseAge = parseReleaseAgeInfo(output)
+  if (releaseAge.refs.length > 0 || hasReleaseAgeSignal(output)) {
+    throw releaseAgeBlockedError(releaseAge, result)
   }
 
   if (result.timedOut) {

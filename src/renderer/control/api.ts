@@ -3,7 +3,7 @@
  * Renderers are framework-free: each tab module exports render()/init().
  */
 
-export type PluginInstallSource = 'npm' | 'npx' | 'dsh-profile'
+export type PluginInstallSource = 'npm' | 'npx' | 'dsh-profile' | 'pnpm' | 'github' | 'custom'
 
 export interface PluginView {
   id: string
@@ -27,7 +27,7 @@ export interface PluginListResult {
   profileDir: string
 }
 
-/** Result of a plugin install: success, or pnpm blocked build scripts. */
+/** Result of a plugin install: success, or a pnpm supply-chain gate blocked it. */
 export type PluginInstallResult =
   | { status: 'installed'; plugins: PluginView[] }
   | {
@@ -39,6 +39,13 @@ export type PluginInstallResult =
       /** Plain package names for onlyBuiltDependencies. */
       names: string[]
     }
+  | {
+      status: 'release-age-blocked'
+      /** User-facing explanation (pnpm minimumReleaseAge gate). */
+      message: string
+      /** Exact name@version refs pnpm wants excluded. */
+      refs: string[]
+    }
 
 export interface ExportInfo {
   packageName: string
@@ -48,6 +55,8 @@ export interface ExportInfo {
 
 export interface DshMarketStatus {
   dshRunning: boolean
+  /** DSH 服务地址（http://127.0.0.1:<port>），用于内嵌市场 iframe。 */
+  serviceUrl: string
   installed: boolean
   enabled: boolean
   version: string | null
@@ -214,7 +223,7 @@ export interface Bridge {
   restart: () => Promise<void>
 
   listPlugins: () => Promise<PluginListResult>
-  addPlugin: (options: { name: string; source: PluginInstallSource; profile?: string; allowBuilds?: boolean }) => Promise<PluginInstallResult>
+  addPlugin: (options: { name: string; source: PluginInstallSource; profile?: string; allowBuilds?: boolean; allowReleaseAge?: boolean }) => Promise<PluginInstallResult>
   removePlugin: (id: string) => Promise<PluginListResult>
   enablePlugin: (id: string) => Promise<PluginListResult>
   disablePlugin: (id: string) => Promise<PluginListResult>
@@ -224,10 +233,10 @@ export interface Bridge {
 
   // ---- plugin market (dsh-market 快捷配置入口) ----
   marketStatus: () => Promise<DshMarketStatus>
+  /** 让主进程在内嵌市场 iframe 中执行「设置 → 插件市场」导航。 */
+  marketNavigateFrame: () => Promise<boolean>
   ensureMarket: () => Promise<DshMarketStatus>
   openMarket: () => Promise<DshMarketStatus>
-  /** 打开市场原生界面窗口（独立 BrowserWindow 承载 DSH Web UI → 设置 → 插件市场）。 */
-  openMarketWindow: () => Promise<boolean>
 
   listVersions: () => Promise<InstalledVersion[]>
   checkUpdates: (source?: 'release' | 'commit') => Promise<{

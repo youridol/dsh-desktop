@@ -1,5 +1,35 @@
 # Changelog
 
+## [v0.11.0] - 2026-08-27
+
+### 修复（dsh-client-ui-git-graph 安装失败 / 插件模块重构）
+
+- **修复通过 desktop 壳安装 @linxin666/dsh-client-ui-git-graph 失败**（根因：pnpm 11 的 minimumReleaseAge 供应链策略，`src/main/services/dsh/pnpmBuildPolicy.ts` + DshPluginInstaller + DshPluginService）：
+  - **根因**：pnpm ≥ 11（corepack 内置默认 `minimumReleaseAge: 1440` = 24 小时）会在锁文件校验阶段拒绝「发布不足 24 小时」的依赖——当 web profile 里已存在近期发布的 `dshmarket@1.31.2` / `@linxin666/dsh-chat-recovery@0.3.5` 时，任何 `dsh plugin add`（包括 git-graph）都会以 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` 失败，且该错误此前未被识别（只处理了构建脚本拦截），直接以「安装失败」提示给用户；
+  - **检测**：新增 `hasReleaseAgeSignal` / `parseReleaseAgeInfo`，识别 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / `NO_MATURE_MATCHING_VERSION` / `minimumReleaseAge cutoff` 输出并解析出 `name@version` 引用；
+  - **放行**：新增 `authorizeReleaseAgeExcludes`，把 pnpm 要求的引用幂等写入 profile 的 pnpm-workspace.yaml `minimumReleaseAgeExclude`（dsh 自己指向的同一策略文件），随后自动重试安装；
+  - **UI**：新增「minimumReleaseAge 供应链策略拦截」确认对话框（列出被拦截的包，放行并重试），IPC `plugins:add` 新增 `allowReleaseAge` 选项；
+  - 验证：真实环境复现（首次 = RELEASE_AGE_BLOCKED）→ 放行重试成功安装 `@linxin666/dsh-client-ui-git-graph@0.3.4`；新增 7 项单测覆盖检测与授权。
+- **插件安装方式新增自定义命令 + GitHub 模式**（`src/main/services/dsh/DshPluginInstaller.ts` + 控制面板插件页签）：
+  - 安装方式按钮组新增 **pnpm**、**GitHub**、**自定义命令** 三种模式（原 npm / npx / dsh 保留）；
+  - **GitHub 模式**：输入 `github:owner/repo` 或 `https://github.com/owner/repo`，经官方 dsh plugin 通道安装；
+  - **自定义命令**：可输入完整安装命令（`npx dsh plugin --profile web add <pkg>` / `pnpm add <pkg>` / `npm install <pkg>` 等），主进程将其分词为参数数组执行（新增 `execRaw`，永不经过 shell 解释，无注入面）；`dsh`/`npx dsh` 前缀自动路由到捆绑 dsh 运行时；
+  - 自定义安装的解析包名与原始输入同时写入安装记录，列表正确显示来源标签。
+- **市场原生界面直接内嵌卡片容器**（控制面板插件页签 + `src/main/ipc.ts` + DshMarketService）：
+  - dsh-market 原生 Web UI 现在直接内嵌在插件页签的卡片容器中（iframe 承载 DSH Web UI，加载后主进程自动导航到 设置 → 插件市场，100% 官方 React 组件）；
+  - **移除**「打开市场原生界面」独立窗口按钮与描述（删除 src/main/windows/market.ts 及 plugins:marketWindowOpen IPC）；
+  - 保留「在主窗口打开」便捷入口；内嵌 iframe 加载需 DSH 服务就绪 + dshmarket 已安装启用。
+- **统一依赖与工具链（PNPM）**：
+  - package.json 声明 `packageManager: pnpm@11.22.0` + `engines`（node ≥ 22 / pnpm ≥ 9），与 dsh-market / deepseek-harness 共用同一 pnpm 工具链；
+  - 新增 `pnpm-workspace.yaml`（allowBuilds: electron / esbuild）与提交 `pnpm-lock.yaml`；CI 改为 corepack 启用 pnpm + `pnpm install --frozen-lockfile`（build-and-release.yml），缓存键换为 pnpm；
+  - 运行期 toolchain.ts 仍保证 npm / npx / pnpm 对 harness 子进程的 PATH 可见（未改动 deepseek-harness 任何行为）。
+- **控制面板窗口默认大小改为 1000 × 600**（src/main/windows/control.ts，原 560 × 680）。
+
+### 验证
+
+- 新增 / 更新 test/pnpm-build-policy.test.mjs（release-age 信号 / 引用解析 / 授权幂等）与 test/plugin-service.test.mjs（pnpm / github / custom 来源、release-age 拦截与重试）；npm run typecheck、npm run build 与全部 154 项测试通过（原 139 项 + 15 项新增）。
+- 未修改 deepseek-harness 与 dsh-market 上游任何源码；所有扩展均在 dsh-desktop 自身模块实现。
+
 ## [v0.10.1] - 2026-08-27
 
 ### 修复（pnpm 构建脚本放行 / 市场原生界面）

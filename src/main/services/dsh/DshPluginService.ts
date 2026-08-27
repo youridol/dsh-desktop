@@ -19,17 +19,24 @@ import {
   runInstall,
   validationError,
   isBuildBlockedError,
+  isReleaseAgeBlockedError,
   DEFAULT_PROFILE,
   type InstallPluginOptions,
   type PluginInstallSource,
 } from './DshPluginInstaller'
-import { authorizeBuildScripts } from './pnpmBuildPolicy'
+import { authorizeBuildScripts, authorizeReleaseAgeExcludes } from './pnpmBuildPolicy'
 import { resolveProfileDir, resolveProfileManifestPath } from './profilePaths'
 import { appLog } from '../../logger'
 
 // ---- types ----
 
-export type { PluginInstallSource, InstallPluginOptions, PluginInstallError } from './DshPluginInstaller'
+export type {
+  PluginInstallSource,
+  InstallPluginOptions,
+  PluginInstallError,
+  BuildBlockedInstallError,
+  ReleaseAgeBlockedInstallError,
+} from './DshPluginInstaller'
 
 export interface PluginView {
   /** dsh.profile.bundles id / npm package name. */
@@ -245,6 +252,8 @@ export function listPlugins(): PluginListResult {
 export interface InstallPluginRunOptions {
   /** Authorize pnpm-blocked build scripts and retry once on failure. */
   allowBuilds?: boolean
+  /** Authorize pnpm minimumReleaseAge-blocked refs and retry once on failure. */
+  allowReleaseAge?: boolean
 }
 
 /** Run the install and persist metadata on success (shared by retries). */
@@ -263,11 +272,20 @@ async function installAndPersist(
   }
 
   const profile = options.profile ?? DEFAULT_PROFILE
-  saveInstallRecord(options.name, options.source, profile)
 
   const after = new Set(Object.keys(readManifest().dependencies ?? {}))
   const added = [...after].filter((dep) => !before.has(dep))
+  // For git/GitHub/custom installs the resolved package name (manifest dep
+  // key) differs from the raw spec input. Persist the record under BOTH the
+  // raw spec and the resolved dep name(s) so listPlugins (which keys by the
+  // manifest dep key) finds the source label instead of falling back to the
+  // legacy default.
   const names = added.length > 0 ? added : [options.name]
+  saveInstallRecord(options.name, options.source, profile)
+  for (const resolved of names) {
+    if (resolved !== options.name) saveInstallRecord(resolved, options.source, profile)
+  }
+
   const { plugins } = listPlugins()
   return plugins.filter((p) => names.includes(p.packageName))
 }
@@ -304,6 +322,10 @@ export async function installPlugin(
         keys: err.keys,
         names: err.names,
       })
+      return installAndPersist(options, exec)
+    }
+    if (runOpts.allowReleaseAge && isReleaseAgeBlockedError(err)) {
+      authorizeReleaseAgeExcludes(options.profile ?? DEFAULT_PROFILE, { refs: err.refs })
       return installAndPersist(options, exec)
     }
     throw err
@@ -444,4 +466,4 @@ export function formatCliError(result: ExecResult): string {
   return `命令以退出码 ${result.exitCode} 结束`
 }
 
-export { validationError, isBuildBlockedError }
+export { validationError, isBuildBlockedError, isReleaseAgeBlockedError }

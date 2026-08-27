@@ -76,9 +76,9 @@ export function createControlPanel(): BrowserWindow {
   attachMainWindowListeners()
   const main = getMainWindow()
   panel = new BrowserWindow({
-    width: 560,
-    height: 680,
-    minWidth: 480,
+    width: 1000,
+    height: 600,
+    minWidth: 800,
     minHeight: 520,
     parent: main ?? undefined,
     frame: false,

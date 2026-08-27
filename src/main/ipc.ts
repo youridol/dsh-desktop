@@ -10,12 +10,10 @@ import * as dsh from './dsh/manager'
 import * as versions from './versions'
 import * as dshPlugin from './services/dsh/DshPluginService'
 import * as dshMarket from './services/dsh/DshMarketService'
-import { isBuildBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
+import { isBuildBlockedError, isReleaseAgeBlockedError, type InstallPluginOptions } from './services/dsh/DshPluginService'
 import * as skills from './services/skills/skillsService'
 import { getAutoStart, setAutoStart } from './autostart'
 import { getControlPanel } from './windows/control'
-import * as marketWindow from './windows/market'
-import { appLog } from './logger'
 import { ballClicked, dragBallBy } from './windows/floating'
 import { refreshServiceProbe } from './windows/main'
 
@@ -70,10 +68,11 @@ export function registerIpc(): void {
 
   // ---- plugins (dsh profile-based) ----
   ipcMain.handle('plugins:list', () => dshPlugin.listPlugins())
-  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions & { allowBuilds?: boolean }) => {
+  ipcMain.handle('plugins:add', async (_e, options: InstallPluginOptions & { allowBuilds?: boolean; allowReleaseAge?: boolean }) => {
     try {
       const plugins = await dshPlugin.installPlugin(options, undefined, {
         allowBuilds: options?.allowBuilds === true,
+        allowReleaseAge: options?.allowReleaseAge === true,
       })
       return { status: 'installed', plugins }
     } catch (err) {
@@ -81,6 +80,11 @@ export function registerIpc(): void {
       // so the renderer can offer a real allow-build-scripts-and-retry action.
       if (isBuildBlockedError(err)) {
         return { status: 'build-blocked', message: err.message, keys: err.keys, names: err.names }
+      }
+      // pnpm minimumReleaseAge gate rejected recently-published refs: offer an
+      // allow-release-age-and-retry action (writes minimumReleaseAgeExclude).
+      if (isReleaseAgeBlockedError(err)) {
+        return { status: 'release-age-blocked', message: err.message, refs: err.refs }
       }
       throw err
     }
@@ -112,24 +116,30 @@ export function registerIpc(): void {
 
   // ---- plugin market (dsh-market 快捷配置入口) ----
   ipcMain.handle('plugins:marketStatus', () => dshMarket.marketStatus())
+  // 内嵌市场 iframe 加载完成后，在主进程找到该子 frame 并执行「设置 → 插件市场」
+  // 导航脚本（跨源 iframe 无法从渲染进程访问，必须由主进程 executeJavaScript）。
+  ipcMain.handle('plugins:marketNavigateFrame', () => {
+    const win = getControlPanel()
+    const wc = win && !win.isDestroyed() ? win.webContents : null
+    if (!wc) return false
+    try {
+      const frame = wc.mainFrame.frames.find((f) =>
+        /^https?:\/\/127\.0\.0\.1(?::\d+)?\//.test(f.url),
+      )
+      if (!frame) return false
+      void frame
+        .executeJavaScript(dshMarket.openMarketSectionScript(), true)
+        .catch(() => undefined)
+      return true
+    } catch {
+      return false
+    }
+  })
   ipcMain.handle('plugins:marketEnsure', async () => {
     await dshMarket.ensureMarketInstalled()
     return dshMarket.marketStatus()
   })
   ipcMain.handle('plugins:marketOpen', () => dshMarket.openMarket())
-  // 打开市场原生界面窗口（独立 BrowserWindow 承载 DSH Web UI 的
-  // 设置 → 插件市场，100% 原生 dsh-market 组件）。
-  ipcMain.handle('plugins:marketWindowOpen', () => {
-    const ok = marketWindow.openMarketWindow()
-    if (!ok) {
-      // DSH 未运行：启动后再打开。
-      void dsh.start().then(() => {
-        const started = marketWindow.openMarketWindow()
-        if (!started) appLog.warn('marketWindowOpen: DSH 未就绪，无法打开市场窗口')
-      })
-    }
-    return ok
-  })
 
   // ---- skills (dsh-desktop 自身管理的 Skills 仓库 / 生命周期 / 备份) ----
   ipcMain.handle('skills:listRepos', () => skills.listRepositories())

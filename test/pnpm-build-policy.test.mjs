@@ -25,7 +25,7 @@ fs.writeFileSync(stub, 'module.exports = { app: { isPackaged: false, getPath: ()
 await build({
   stdin: {
     contents: [
-      `export { hasBlockedBuildSignal, parseBlockedBuildInfo, authorizeBuildScripts } from './src/main/services/dsh/pnpmBuildPolicy'`,
+      `export { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes } from './src/main/services/dsh/pnpmBuildPolicy'`,
       `export { resolveProfileDir, resolveDshHome } from './src/main/services/dsh/profilePaths'`,
     ].join('\n'),
     resolveDir: root,
@@ -40,7 +40,7 @@ await build({
   logLevel: 'silent',
 })
 
-const { hasBlockedBuildSignal, parseBlockedBuildInfo, authorizeBuildScripts, resolveProfileDir } =
+const { hasBlockedBuildSignal, parseBlockedBuildInfo, hasReleaseAgeSignal, parseReleaseAgeInfo, authorizeBuildScripts, authorizeReleaseAgeExcludes, resolveProfileDir } =
   await import(pathToFileURL(outfile).href)
 
 // ---- fixtures ----
@@ -282,3 +282,79 @@ test('authorizeBuildScripts git-dep keys include stable + pinned + bare forms', 
   assert.equal(doc.allowBuilds['@linxin666/dsh-chat-recovery'], true)
 })
 
+
+// ---- minimumReleaseAge gate (pnpm 11 supply-chain policy) ----
+
+const MIN_AGE_LOCKFILE_OUTPUT = [
+  '✗ Lockfile failed supply-chain policy check (15 entries in 1.3s)',
+  '[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 2 lockfile entries failed verification:',
+  '  @linxin666/dsh-chat-recovery@0.3.5 was published at 2026-08-26T11:30:03.916Z, within the minimumReleaseAge cutoff (2026-08-26T09:20:28.567Z)',
+  '  dshmarket@1.31.2 was published at 2026-08-27T03:56:06.000Z, within the minimumReleaseAge cutoff (2026-08-26T09:20:28.567Z)',
+  '',
+  'The lockfile contains entries that the active policies reject.',
+].join('\n')
+
+const MIN_AGE_RESOLUTION_OUTPUT = [
+  '[NO_MATURE_MATCHING_VERSION] 1 version does not meet the minimumReleaseAge constraint:',
+  '  @scope/new-plugin@1.0.0 was published at 2026-08-27T01:00:00.000Z, within the minimumReleaseAge cutoff (2026-08-26T09:20:28.567Z)',
+  'hint: Run the install interactively to approve these picks...',
+].join('\n')
+
+test('hasReleaseAgeSignal recognizes pnpm minimumReleaseAge failures', () => {
+  assert.equal(hasReleaseAgeSignal(MIN_AGE_LOCKFILE_OUTPUT), true)
+  assert.equal(hasReleaseAgeSignal(MIN_AGE_RESOLUTION_OUTPUT), true)
+  assert.equal(hasReleaseAgeSignal('pnpm failed in profile directory C:\\Users\\t\\.dsh\\profiles\\web'), false)
+  assert.equal(hasReleaseAgeSignal(''), false)
+})
+
+test('parseReleaseAgeInfo extracts name@version refs from lockfile verification', () => {
+  const info = parseReleaseAgeInfo(MIN_AGE_LOCKFILE_OUTPUT)
+  assert.deepEqual(info.refs, ['@linxin666/dsh-chat-recovery@0.3.5', 'dshmarket@1.31.2'])
+})
+
+test('parseReleaseAgeInfo extracts refs from NO_MATURE_MATCHING_VERSION', () => {
+  const info = parseReleaseAgeInfo(MIN_AGE_RESOLUTION_OUTPUT)
+  assert.deepEqual(info.refs, ['@scope/new-plugin@1.0.0'])
+})
+
+test('parseReleaseAgeInfo returns empty for unrelated failures', () => {
+  assert.deepEqual(parseReleaseAgeInfo(''), { refs: [] })
+  assert.deepEqual(parseReleaseAgeInfo('pnpm failed in profile directory X'), { refs: [] })
+})
+
+test('authorizeReleaseAgeExcludes writes minimumReleaseAgeExclude into pnpm-workspace.yaml', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, 'packages:\n  - .\n' + 'nodeLinker: hoisted\n' + 'allowBuilds:\n  cloudflared: true\n')
+  writeManifest(dir, { name: 'dsh-profile-web', private: true, dependencies: {} })
+  const res = authorizeReleaseAgeExcludes('web', { refs: ['dshmarket@1.31.2', '@linxin666/dsh-chat-recovery@0.3.5'] })
+  assert.deepEqual(res.added, ['dshmarket@1.31.2', '@linxin666/dsh-chat-recovery@0.3.5'])
+  const doc = yaml.load(fs.readFileSync(res.workspacePath, 'utf8'))
+  assert.deepEqual(doc.minimumReleaseAgeExclude, ['dshmarket@1.31.2', '@linxin666/dsh-chat-recovery@0.3.5'])
+  // Existing sections preserved.
+  assert.equal(doc.allowBuilds.cloudflared, true)
+  assert.equal(doc.nodeLinker, 'hoisted')
+})
+
+test('authorizeReleaseAgeExcludes merges into an existing exclude list and is idempotent', () => {
+  const dir = profileDir()
+  writeWorkspace(dir, [
+    'packages:',
+    '  - .',
+    'minimumReleaseAgeExclude:',
+    '  - dshmarket@1.31.1',
+    '  - dsh-sm-tools@0.1.1',
+    '',
+  ].join('\n'))
+  writeManifest(dir, { name: 'dsh-profile-web', private: true, dependencies: {} })
+  const first = authorizeReleaseAgeExcludes('web', { refs: ['dshmarket@1.31.2'] })
+  assert.deepEqual(first.added, ['dshmarket@1.31.2'])
+  const second = authorizeReleaseAgeExcludes('web', { refs: ['dshmarket@1.31.2'] })
+  assert.deepEqual(second.added, [])
+  const doc = yaml.load(fs.readFileSync(first.workspacePath, 'utf8'))
+  assert.deepEqual(doc.minimumReleaseAgeExclude, ['dshmarket@1.31.1', 'dsh-sm-tools@0.1.1', 'dshmarket@1.31.2'])
+})
+
+test('authorizeReleaseAgeExcludes with no refs writes nothing', () => {
+  const res = authorizeReleaseAgeExcludes('web', { refs: [] })
+  assert.deepEqual(res.added, [])
+})

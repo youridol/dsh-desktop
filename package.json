@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "DeepSeek Harness (DSH) desktop shell — bundles the DSH Web UI in an Electron window with floating-ball control panel, plugin/version management, tray and auto-start.",
   "main": "dist/main.js",
   "repository": {
@@ -10,6 +10,11 @@
   "author": "youridol <youridol888@gmail.com>",
   "license": "MIT",
   "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test",

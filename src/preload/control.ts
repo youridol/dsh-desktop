@@ -11,7 +11,7 @@ const api = {
   restart: () => ipcRenderer.invoke('app:restart'),
 
   listPlugins: () => ipcRenderer.invoke('plugins:list'),
-  addPlugin: (options: { name: string; source: 'npm' | 'npx' | 'dsh-profile'; profile?: string; allowBuilds?: boolean }) =>
+  addPlugin: (options: { name: string; source: 'npm' | 'npx' | 'dsh-profile'; profile?: string; allowBuilds?: boolean; allowReleaseAge?: boolean }) =>
     ipcRenderer.invoke('plugins:add', options),
   removePlugin: (id: string) => ipcRenderer.invoke('plugins:remove', id),
   enablePlugin: (id: string) => ipcRenderer.invoke('plugins:enable', id),
@@ -22,9 +22,9 @@ const api = {
 
   // ---- plugin market (dsh-market 快捷配置入口) ----
   marketStatus: () => ipcRenderer.invoke('plugins:marketStatus'),
+  marketNavigateFrame: () => ipcRenderer.invoke('plugins:marketNavigateFrame'),
   ensureMarket: () => ipcRenderer.invoke('plugins:marketEnsure'),
   openMarket: () => ipcRenderer.invoke('plugins:marketOpen'),
-  openMarketWindow: () => ipcRenderer.invoke('plugins:marketWindowOpen'),
 
   // ---- skills ----
   listSkillRepos: () => ipcRenderer.invoke('skills:listRepos'),

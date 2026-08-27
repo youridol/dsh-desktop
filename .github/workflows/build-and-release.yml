@@ -108,10 +108,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - name: Install dependencies (npm ci)
-        run: npm ci --no-audit --no-fund
+      - name: Enable corepack + unified pnpm toolchain
+        # 与 dsh-market / deepseek-harness 共用同一 pnpm 工具链（packageManager 声明）
+        run: |
+          corepack enable
+          pnpm --version
+
+      - name: Install dependencies (pnpm install --frozen-lockfile)
+        run: pnpm install --frozen-lockfile --no-audit --no-fund
 
       - name: Validate release logic
         # 发版决策模块（scripts/release-plan.mjs）单测：版本递进识别 / tag 生成 / 幂等判定
